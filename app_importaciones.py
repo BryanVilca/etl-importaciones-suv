@@ -569,7 +569,7 @@ def procesar_marca(df_final_limpio, marca):
 
 
 def etl_pipeline(df_raw, marcas_seleccionadas):
-    df_raw = df_raw.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    df_raw = df_raw.apply(lambda col: col.map(lambda x: x.strip() if isinstance(x, str) else x))
     df_raw["DESC_UP"] = df_raw["Descripcion Comercial"].astype(str).str.upper().str.strip()
     df_suv = df_raw[df_raw["DESC_UP"].str.contains(r"\bSUV\b", case=False, na=False)].copy()
 
