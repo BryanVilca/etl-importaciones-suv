@@ -811,18 +811,20 @@ with tab1:
 
     col_up, col_btn = st.columns([3, 1])
     with col_up:
-        uploaded_file = st.file_uploader(
-            "📂 Dataset consolidado Veritrade (.xlsx o .csv)",
+        uploaded_files = st.file_uploader(
+            "📂 Dataset(s) Veritrade — podés subir varios a la vez (.xlsx o .csv)",
             type=["xlsx", "xls", "csv"],
             key="uploader_importaciones",
-            help="Consolidado Veritrade en .xlsx o .csv"
+            accept_multiple_files=True,
+            help="Seleccioná uno o varios archivos Veritrade. Se consolidan automáticamente."
         )
+        uploaded_file = uploaded_files[0] if uploaded_files and len(uploaded_files) == 1 else None
     with col_btn:
         st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
         procesar_btn = st.button("🚀 Procesar ETL", type="primary", use_container_width=True, key="btn_etl")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if uploaded_file is None:
+    if not uploaded_files:
         st.markdown("""
         <div class="astara-info">
             <strong>⬆️ Subí el dataset consolidado Veritrade</strong> para comenzar el procesamiento ETL.
@@ -852,15 +854,25 @@ with tab1:
                 return pd.read_csv(buf, encoding="latin1", on_bad_lines="skip")
             return pd.read_excel(buf, engine="openpyxl", skiprows=5)
 
-        nombre_archivo = uploaded_file.name
-        df_raw = leer_archivo(uploaded_file.getvalue(), nombre_archivo)
+        # ── Leer y consolidar todos los archivos subidos
+        dfs_raw = []
+        nombres = []
+        for uf in uploaded_files:
+            df_tmp = leer_archivo(uf.getvalue(), uf.name)
+            dfs_raw.append(df_tmp)
+            nombres.append(uf.name)
 
-        with st.expander("🔍  Vista previa del dataset cargado"):
+        if len(dfs_raw) == 1:
+            df_raw = dfs_raw[0]
+        else:
+            df_raw = pd.concat(dfs_raw, ignore_index=True)
+
+        with st.expander(f"🔍  Vista previa — {len(uploaded_files)} archivo(s) consolidado(s)"):
             st.markdown(f"""
             <div style='font-size:0.78rem;color:#666;margin-bottom:0.6rem;'>
-                <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[0]:,} filas &nbsp;·&nbsp;
+                <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[0]:,} filas totales &nbsp;·&nbsp;
                 <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[1]} columnas &nbsp;·&nbsp;
-                <span style='color:#555'>{nombre_archivo}</span>
+                <span style='color:#555'>{" · ".join(nombres)}</span>
             </div>
             """, unsafe_allow_html=True)
             st.dataframe(df_raw.head(10), use_container_width=True)
