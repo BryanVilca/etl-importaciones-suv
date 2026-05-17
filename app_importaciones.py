@@ -852,10 +852,32 @@ with tab1:
     else:
         @st.cache_data(show_spinner="Leyendo archivo...")
         def leer_archivo(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+            import io as _io2
             buf = io.BytesIO(file_bytes)
-            if file_name.endswith(".csv"):
-                return pd.read_csv(buf, encoding="latin1", on_bad_lines="skip")
-            return pd.read_excel(buf, engine="openpyxl", skiprows=5)
+
+            # Detectar si es TSV disfrazado de .xls (formato Veritrade)
+            sniff = file_bytes[:500]
+            is_tsv = b"\t" in sniff and (b"Partida" in sniff or b"Importador" in sniff or b"Descripcion" in sniff)
+
+            if file_name.endswith(".csv") or is_tsv:
+                for enc in ["latin1", "utf-8", "cp1252"]:
+                    try:
+                        return pd.read_csv(
+                            _io2.BytesIO(file_bytes),
+                            sep="\t" if is_tsv else ",",
+                            encoding=enc,
+                            on_bad_lines="skip"
+                        )
+                    except Exception:
+                        continue
+                return pd.read_csv(_io2.BytesIO(file_bytes), encoding="latin1", on_bad_lines="skip")
+
+            # Excel real (.xlsx)
+            try:
+                return pd.read_excel(buf, engine="openpyxl", skiprows=5)
+            except Exception:
+                # Fallback sin skiprows por si el archivo no tiene filas de cabecera extras
+                return pd.read_excel(_io2.BytesIO(file_bytes), engine="openpyxl")
 
         # ── Leer y consolidar todos los archivos subidos
         dfs_raw = []
