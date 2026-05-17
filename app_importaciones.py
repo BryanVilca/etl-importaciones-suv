@@ -581,8 +581,11 @@ def procesar_marca(df_final_limpio, marca):
     importador = MARCAS_CONFIG.get(marca)
     mask_marca = df_final_limpio["MARCA"].str.upper() == marca.upper()
     if importador:
-        mask_imp = df_final_limpio["Importador"].str.upper() == importador.upper()
-        df_marca = df_final_limpio[mask_marca & mask_imp].copy()
+        if "Importador" in df_final_limpio.columns:
+            mask_imp = df_final_limpio["Importador"].str.upper() == importador.upper()
+            df_marca = df_final_limpio[mask_marca & mask_imp].copy()
+        else:
+            df_marca = df_final_limpio[mask_marca].copy()
     else:
         df_marca = df_final_limpio[mask_marca].copy()
     if df_marca.empty: return df_marca
@@ -614,7 +617,19 @@ def procesar_marca(df_final_limpio, marca):
 
 def etl_pipeline(df_raw, marcas_seleccionadas):
     df_raw = df_raw.apply(lambda col: col.map(lambda x: x.strip() if isinstance(x, str) else x))
-    df_raw["DESC_UP"] = df_raw["Descripcion Comercial"].astype(str).str.upper().str.strip()
+    # ── Detectar columna "Descripcion Comercial" con tolerancia a variantes
+    col_desc = next(
+        (c for c in df_raw.columns
+         if "descripcion" in c.lower() and "comercial" in c.lower()),
+        None
+    )
+    if col_desc is None:
+        st.error(
+            f"❌ No se encontró la columna 'Descripcion Comercial'. "
+            f"Columnas disponibles: {list(df_raw.columns[:15])}"
+        )
+        st.stop()
+    df_raw["DESC_UP"] = df_raw[col_desc].astype(str).str.upper().str.strip()
     df_suv = df_raw[df_raw["DESC_UP"].str.contains(r"\bSUV\b", case=False, na=False)].copy()
 
     todas_marcas = list(MARCAS_CONFIG.keys())
@@ -683,14 +698,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<p class="sidebar-label">📂 Dataset</p>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader(
-        "Dataset",
-        type=["xlsx", "xls", "csv"],
-        label_visibility="collapsed",
-        help="Consolidado Veritrade en .xlsx o .csv"
-    )
-
     st.markdown('<p class="sidebar-label">🏷️ Marcas a procesar</p>', unsafe_allow_html=True)
 
     todas_marcas_lista = sorted(MARCAS_CONFIG.keys())
@@ -715,9 +722,6 @@ with st.sidebar:
     for marca in todas_marcas_lista:
         if st.checkbox(marca, key=f"cb_{marca}"):
             marcas_seleccionadas.append(marca)
-
-    st.markdown("---")
-    procesar_btn = st.button("🚀  Procesar ETL", type="primary", use_container_width=True)
 
     n_sel = len(marcas_seleccionadas)
     st.markdown(f"""
@@ -789,6 +793,19 @@ tab1, tab2 = st.tabs(["📦  Importaciones SUV", "💲  Precios Nyvus"])
 
 with tab1:
 
+    # ── Uploader y botón DENTRO del tab (aislado del tab de precios)
+    col_up, col_btn = st.columns([3, 1])
+    with col_up:
+        uploaded_file = st.file_uploader(
+            "📂 Dataset consolidado Veritrade (.xlsx o .csv)",
+            type=["xlsx", "xls", "csv"],
+            key="uploader_importaciones",
+            help="Consolidado Veritrade en .xlsx o .csv"
+        )
+    with col_btn:
+        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+        procesar_btn = st.button("🚀 Procesar ETL", type="primary", use_container_width=True, key="btn_etl")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════
     # LANDING
@@ -796,7 +813,7 @@ with tab1:
     if uploaded_file is None:
         st.markdown("""
         <div class="astara-info">
-            <strong>👈 Subí el dataset consolidado</strong> desde el panel lateral para comenzar el procesamiento ETL.
+            <strong>⬆️ Subí el dataset consolidado Veritrade</strong> para comenzar el procesamiento ETL.
         </div>
         """, unsafe_allow_html=True)
 
