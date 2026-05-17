@@ -754,7 +754,7 @@ st.markdown("""
 if uploaded_file is None:
     st.markdown("""
     <div class="astara-info">
-        <strong>👈 Subí el dataset consolidado</strong> desde el panel lateral para comenzar el procesamiento ETL.
+        <strong>👈 Sube el dataset consolidado</strong> desde el panel lateral para comenzar el procesamiento ETL.
     </div>
     """, unsafe_allow_html=True)
 
@@ -764,15 +764,15 @@ if uploaded_file is None:
         <div class="step-card">
             <div class="step-number">01</div>
             <div class="step-text">
-                <strong>Cargá el dataset</strong>
-                Subí el consolidado Veritrade en formato .xlsx o .csv desde el sidebar.
+                <strong>Carga el dataset</strong>
+                Sube el consolidado Veritrade en formato .xlsx o .csv desde el sidebar.
             </div>
         </div>
         <div class="step-card">
             <div class="step-number">02</div>
             <div class="step-text">
                 <strong>Seleccioná marcas</strong>
-                Elegí una o todas las marcas que querés incluir en el procesamiento.
+                Elige una o todas las marcas que quieras incluir en el procesamiento.
             </div>
         </div>
         <div class="step-card">
@@ -786,7 +786,7 @@ if uploaded_file is None:
             <div class="step-number">04</div>
             <div class="step-text">
                 <strong>Descargá el CSV</strong>
-                Exportá el dataset limpio con MARCA, MODELO, VERSION, AÑO, FOB, FLETE y SEGURO.
+                Exportar el dataset limpio con MARCA, MODELO, VERSION, AÑO, FOB, FLETE y SEGURO.
             </div>
         </div>
     </div>
@@ -835,7 +835,7 @@ with st.expander("🔍  Vista previa del dataset cargado"):
 # ══════════════════════════════════════════════
 if procesar_btn:
     if not marcas_seleccionadas:
-        st.markdown('<div class="astara-warning">⚠️ Seleccioná al menos una marca para continuar.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="astara-warning">⚠️ Selecciona al menos una marca para continuar.</div>', unsafe_allow_html=True)
         st.stop()
 
     with st.spinner("Ejecutando pipeline ETL..."):
