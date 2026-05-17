@@ -459,23 +459,67 @@ def parse_chevrolet(text): return _parse_ve_aniomed(text)
 
 def _parse_split_format(text):
     result = {"modelo": None, "version": None, "anio_modelo": None}
-    if not isinstance(text, str): return result
-    m = re.search(r"MODELO:\s*([^,]+)", text, re.IGNORECASE)
-    if not m:
-        parts = [p.strip() for p in text.split(",")]
-        modelo = parts[2] if len(parts) >= 3 else None
-    else:
-        modelo = m.group(1).strip()
-    result["modelo"] = modelo
-    m = re.search(r"VE:\s*([^,]+)", text, re.IGNORECASE)
-    if m:
-        version = m.group(1).strip()
-    else:
-        parts = [p.strip() for p in text.split(",")]
-        version = parts[3] if len(parts) >= 4 else None
+    if not isinstance(text, str):
+        return result
+
+    text = text.strip()
+    parts = [p.strip() for p in text.split(",")]
+
+    # ── Formato: M1,MARCA:PEUGEOT,MODELO:xxx,VE:yyy,AÑO MOD:yyyy
+    if re.search(r"MODELO:", text, re.IGNORECASE):
+        m = re.search(r"MODELO:\s*([^,]+)", text, re.IGNORECASE)
+        modelo = m.group(1).strip() if m else None
+        # Descartar códigos internos tipo SC1035SPCD5
+        if modelo and re.match(r'^[A-Z0-9]{6,}$', modelo):
+            modelo = None
+        m = re.search(r"VE:\s*([^,]+)", text, re.IGNORECASE)
+        version = m.group(1).strip() if m else None
+        if version and version.upper() == "SIN VERSION":
+            version = None
+        # Si modelo es código interno, usar VE como modelo
+        if not modelo and version:
+            result["modelo"] = version
+            result["version"] = None
+        else:
+            result["modelo"] = modelo
+            result["version"] = version
+        m = re.search(r"AÑO\s*MOD[:\s]*(\d{4})", text, re.IGNORECASE)
+        if not m:
+            m = re.search(r"AÑO\s*:?\s*(\d{4})", text, re.IGNORECASE)
+        if not m:
+            for p in reversed(parts):
+                if re.match(r'^\d{4}$', p.strip()):
+                    result["anio_modelo"] = p.strip()
+                    break
+        else:
+            result["anio_modelo"] = m.group(1)
+        return result
+
+    # ── Formato: campo[2] contiene "VE:" embebido
+    # Ej: M1,PEUGEOT,208 VE:R4,2025  /  M1,PEUGEOT,2008 VE:GT LINE...,version, AÑO:2026
+    if len(parts) >= 3 and "VE:" in parts[2].upper():
+        m = re.match(r"(.+?)\s+VE:\s*(.+)", parts[2], re.IGNORECASE)
+        if m:
+            result["modelo"] = m.group(1).strip()
+            version = m.group(2).strip()
+            result["version"] = None if version.upper() == "SIN VERSION" else version
+        m = re.search(r"AÑO\s*:?\s*(\d{4})", text, re.IGNORECASE)
+        if not m:
+            for p in reversed(parts):
+                if re.match(r'^\d{4}$', p.strip()):
+                    result["anio_modelo"] = p.strip()
+                    break
+        else:
+            result["anio_modelo"] = m.group(1)
+        return result
+
+    # ── Formato estándar: N1/M1,PEUGEOT,MODELO,VERSION, AÑO:yyyy
+    result["modelo"] = parts[2] if len(parts) >= 3 else None
+    version = parts[3] if len(parts) >= 4 else None
     if version:
+        version = re.sub(r"\s*AÑO\s*:?\s*\d{4}", "", version, flags=re.IGNORECASE).strip()
         version = re.sub(r"\s+", " ", version).strip()
-        version = re.sub(r",\s*[A-Z0-9\-\.]+$", "", version)
+        version = version if version else None
     result["version"] = version
     m = re.search(r"AÑO\s*:?\s*(\d{4})", text, re.IGNORECASE)
     result["anio_modelo"] = m.group(1) if m else None
