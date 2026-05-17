@@ -633,6 +633,9 @@ def procesar_marca(df_final_limpio, marca):
 
 def etl_pipeline(df_raw, marcas_seleccionadas):
     df_raw = df_raw.apply(lambda col: col.map(lambda x: x.strip() if isinstance(x, str) else x))
+    # ── Normalizar nombres de columna a string (evita int columns tras concat)
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
+
     # ── Detectar columna "Descripcion Comercial" con tolerancia a variantes
     col_desc = next(
         (c for c in df_raw.columns
