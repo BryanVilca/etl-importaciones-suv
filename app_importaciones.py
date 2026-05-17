@@ -1376,12 +1376,12 @@ with tab3:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter", color="#D4C9F0", size=12),
-        legend=dict(bgcolor="rgba(38,29,62,0.9)", bordercolor="#3A2F5A", borderwidth=1, font=dict(size=10)),
         xaxis=dict(gridcolor="#3A2F5A", linecolor="#3A2F5A", tickfont=dict(size=10)),
         yaxis=dict(gridcolor="#3A2F5A", linecolor="#3A2F5A", tickfont=dict(size=10)),
         margin=dict(l=50, r=20, t=50, b=60),
         hoverlabel=dict(bgcolor="#261D3E", bordercolor="#F0B74D", font_color="#D4C9F0"),
     )
+    LEGEND_STYLE = dict(bgcolor="rgba(38,29,62,0.9)", bordercolor="#3A2F5A", borderwidth=1, font=dict(size=10))
 
     MARCAS_DISPONIBLES = ['KIA', 'DFSK', 'HYUNDAI', 'GEELY', 'SUBARU', 'CHANGAN', 'NISSAN', 'VOLKSWAGEN', 'JAC', 'CHERY', 'CHEVROLET', 'HONDA', 'MAZDA', 'SUZUKI', 'GREAT WALL', 'MITSUBISHI', 'RENAULT', 'HAVAL', 'JETOUR', 'PEUGEOT', 'GAC', 'JEEP', 'BYD', 'SWM', 'DONGFENG', 'JAECOO', 'OMODA', 'FORD']
 
@@ -1389,16 +1389,16 @@ with tab3:
 
     uploaded_inmat = st.file_uploader(
         "Dataset Inmatriculaciones",
-        type=["xlsx", "xls"],
+        type=["csv", "xlsx", "xls"],
         key="uploader_inmat",
         label_visibility="collapsed",
-        help="Archivo Market_Results.xlsx del AAP"
+        help="Archivo Market_Results en .csv (recomendado) o .xlsx"
     )
 
     if uploaded_inmat is None:
         st.markdown("""
         <div class="astara-info">
-            <strong>⬆️ Subí el archivo de inmatriculaciones</strong> (Market_Results.xlsx) para explorar el volumen de ventas por marca, modelo y versión.
+            <strong>⬆️ Subí el archivo de inmatriculaciones</strong> en formato <strong>.csv</strong> (recomendado) o .xlsx para explorar el volumen de ventas por marca, modelo y versión.
         </div>
         """, unsafe_allow_html=True)
         st.markdown('<p class="section-title">Qué vas a poder explorar</p>', unsafe_allow_html=True)
@@ -1412,9 +1412,16 @@ with tab3:
         """, unsafe_allow_html=True)
     else:
         @st.cache_data(show_spinner="Procesando inmatriculaciones...")
-        def etl_inmatriculaciones(file_bytes: bytes, marcas_filtro: tuple) -> tuple:
+        def etl_inmatriculaciones(file_bytes: bytes, file_name: str, marcas_filtro: tuple) -> tuple:
             import io
-            df = pd.read_excel(io.BytesIO(file_bytes))
+            buf = io.BytesIO(file_bytes)
+            if file_name.endswith(".csv"):
+                try:
+                    df = pd.read_csv(buf, encoding="utf-8")
+                except UnicodeDecodeError:
+                    df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin1")
+            else:
+                df = pd.read_excel(buf)
 
             # Filtrar SUV
             col_carr = next((c for c in df.columns if "carroceria" in c.lower()), None)
@@ -1508,7 +1515,7 @@ with tab3:
         else:
             inmat_bytes = uploaded_inmat.getvalue()
             df_raw_i, df_res, grp_cols_ok, err = etl_inmatriculaciones(
-                inmat_bytes, tuple(sorted(marcas_inmat_sel))
+                inmat_bytes, uploaded_inmat.name, tuple(sorted(marcas_inmat_sel))
             )
 
             if err:
@@ -1628,9 +1635,9 @@ with tab3:
                     ))
                     fig_pie.update_layout(
                         **PLOTLY_LAYOUT,
+                        legend=dict(bgcolor="rgba(38,29,62,0.9)", bordercolor="#3A2F5A", borderwidth=1, font=dict(size=9)),
                         title=dict(text="Share por Marca", font=dict(color=LIME, size=13)),
                         height=380, showlegend=True,
-                        legend=dict(font=dict(size=9))
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
 
