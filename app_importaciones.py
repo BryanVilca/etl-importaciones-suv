@@ -256,6 +256,7 @@ MARCAS_CONFIG = {
     "DONGFENG":   "DONGFENG MOTOR PERU S.A.C.",
     "JAECOO":     "CHERY OMODA&JAECOO MOTOR, SUCURSAL DEL PERU",
     "OMODA":      "CHERY OMODA&JAECOO MOTOR, SUCURSAL DEL PERU",
+    "FORD":       "FORD PERU S.R.L.",
 }
 
 # ──────────────────────────────────────────────
@@ -548,6 +549,21 @@ def parse_kia(text):
     result["anio_modelo"] = m.group(1) if m else None
     return result
 
+def parse_ford(text):
+    result = {"modelo": None, "version": None, "anio_modelo": None}
+    if not isinstance(text, str):
+        return result
+    m = re.search(r"MODELO:\s*([^,]+)", text, re.IGNORECASE)
+    result["modelo"] = m.group(1).strip() if m else None
+    m = re.search(r"VE:\s*([^,]+)", text, re.IGNORECASE)
+    version = m.group(1).strip() if m else None
+    if version:
+        version = re.sub(r"\s+", " ", version).strip()
+    result["version"] = version
+    m = re.search(r"AÑO\s*MOD[:\s]*(\d{4})", text, re.IGNORECASE)
+    result["anio_modelo"] = m.group(1) if m else None
+    return result
+
 def parse_nissan_desc1(text):
     result = {"modelo": None, "version": None}
     if not isinstance(text, str): return result
@@ -570,7 +586,7 @@ PARSE_FN = {
     "SWM": parse_swm, "JEEP": parse_jeep, "KIA": parse_kia, "AUDI": parse_audi,
     "PEUGEOT": parse_peugeot, "GREAT WALL": parse_greatwall, "CHEVROLET": parse_chevrolet,
     "MITSUBISHI": parse_mitsubishi, "BMW": parse_bmw, "SUBARU": parse_subaru,
-    "MAZDA": parse_mazda, "BYD": parse_byd,
+    "MAZDA": parse_mazda, "BYD": parse_byd, "FORD": parse_ford,
 }
 
 # ──────────────────────────────────────────────
