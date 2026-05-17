@@ -980,10 +980,23 @@ with tab1:
             """, unsafe_allow_html=True)
 
 with tab2:
-    # ══════════════════════════════════════════════
-    # TAB 2 — PRECIOS NYVUS
-    # ══════════════════════════════════════════════
     import numpy as np
+    import re as _re
+    import plotly.graph_objects as go
+    import plotly.express as px
+
+    # ── helpers de paleta
+    LIME   = "#F0B74D"
+    PURPLE = "#1E1932"
+    CARD   = "#261D3E"
+    BORDER = "#3A2F5A"
+    MUTED  = "#9B8FBB"
+
+    PLOTLY_COLORS = [
+        "#F0B74D","#7B6FE8","#4FC3C3","#E86F9A","#6FC87B",
+        "#E8A06F","#6FA8E8","#C36FD4","#E8D46F","#6FD4C3",
+        "#E87B7B","#9AE86F","#6F8CE8","#E8C36F","#C36FA8",
+    ]
 
     st.markdown('<p class="section-title">Cargar dataset de precios</p>', unsafe_allow_html=True)
 
@@ -998,254 +1011,383 @@ with tab2:
     if uploaded_precios is None:
         st.markdown("""
         <div class="astara-info">
-            <strong>👈 Subí el reporte Nyvus (.xlsx)</strong> para transformar y limpiar el dataset de precios.
+            <strong>👈 Subí el reporte Nyvus (.xlsx)</strong> para transformar el dataset de precios y explorar gráficos dinámicos.
         </div>
         """, unsafe_allow_html=True)
-        st.markdown('<p class="section-title">Cómo funciona</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-title">Qué vas a poder hacer</p>', unsafe_allow_html=True)
         st.markdown("""
         <div class="steps-grid">
             <div class="step-card">
                 <div class="step-number">01</div>
-                <div class="step-text"><strong>Cargá el reporte</strong>Exportá desde Nyvus el reporte de precios en .xlsx</div>
+                <div class="step-text"><strong>ETL automático</strong>Detecta columnas lista y bonificado sin importar cuántos meses tenga el reporte</div>
             </div>
             <div class="step-card">
                 <div class="step-number">02</div>
-                <div class="step-text"><strong>Detección automática</strong>La app detecta las columnas de precios lista y bonificado sin importar cuántos meses tiene el reporte</div>
+                <div class="step-text"><strong>Métricas derivadas</strong>Calcula variación mensual, descuento lista vs bonificado y más</div>
             </div>
             <div class="step-card">
                 <div class="step-number">03</div>
-                <div class="step-text"><strong>Transformación</strong>Pivota el dataset a formato largo con métricas de variación mensual y descuento lista vs bonificado</div>
+                <div class="step-text"><strong>Gráficos dinámicos</strong>Filtrá por marca, modelo y versión y explorá evolución de precios, descuentos y variaciones</div>
             </div>
             <div class="step-card">
                 <div class="step-number">04</div>
-                <div class="step-text"><strong>Descargá el resultado</strong>CSV limpio listo para análisis, con precio lista, bonificado, variaciones y % descuento</div>
+                <div class="step-text"><strong>Descarga</strong>CSV detalle por versión y CSV agregado por marca + modelo + mes</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-    else:
-        @st.cache_data(show_spinner="Leyendo reporte Nyvus...")
-        def leer_nyvus(file_bytes: bytes, file_name: str) -> pd.DataFrame:
-            import io
-            return pd.read_excel(io.BytesIO(file_bytes), sheet_name=0)
 
+    else:
         @st.cache_data(show_spinner="Transformando dataset de precios...")
-        def etl_precios(file_bytes: bytes) -> tuple:
-            import io, numpy as np
+        def etl_precios_v2(file_bytes: bytes) -> tuple:
+            import io, numpy as np, re as _re
             df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=0)
 
-            # ── Detectar columnas fijas (no son fechas ni Unnamed)
-            columnas_fijas_candidatas = [
+            columnas_fijas_ok = [
                 'ID', 'Código', 'MARCA', 'Modelo', 'Versión',
                 'Categoría', 'Segmento', 'Tracción',
                 'Tipo De Motor - Combustible Principal',
                 'Tipo De Motor - Combustible Alternativo',
                 'Transmisión'
             ]
-            columnas_fijas = [c for c in columnas_fijas_candidatas if c in df.columns]
+            columnas_fijas = [c for c in columnas_fijas_ok if c in df.columns]
 
-            # ── Detectar bloques de precios automáticamente
-            # Bloque 1: columnas con nombre de mes/año sin sufijo .1
-            mes_pattern = r'(Enero|Febrero|Marzo|Abril|Mayo|Junio|Julio|Agosto|Septiembre|Octubre|Noviembre|Diciembre)\s+\d{4}$'
+            # ── Bloques de precios
             fechas_lista = [
                 col for col in df.columns
-                if pd.Series(col).str.match(mes_pattern).any()
+                if ('2024' in str(col) or '2025' in str(col) or '2026' in str(col))
                 and not str(col).endswith('.1')
                 and not str(col).startswith('Unnamed')
             ]
+            fechas_bonif = [col for col in df.columns if str(col).endswith('.1')]
 
-            # Bloque 2: mismas columnas pero con sufijo .1 (bonificado)
-            fechas_bonificado = [col for col in df.columns if str(col).endswith('.1')]
+            if not fechas_lista or not fechas_bonif:
+                return None, None, None, "No se detectaron columnas de precios. Verificá que el archivo sea un reporte Nyvus válido."
 
-            if not fechas_lista or not fechas_bonificado:
-                return pd.DataFrame(), [], "No se detectaron columnas de precios. Verificá que el archivo sea un reporte Nyvus válido."
-
-            # ── Separar bloques
             df_lista = df[columnas_fijas + fechas_lista].copy()
-            df_bonif = df[columnas_fijas + fechas_bonificado].copy()
-
-            # ── Normalizar nombres del bloque bonificado (quitar .1)
+            df_bonif = df[columnas_fijas + fechas_bonif].copy()
             df_bonif = df_bonif.rename(columns=lambda x: x.replace('.1', '') if x.endswith('.1') else x)
 
-            # ── Pivotar a formato largo
-            df_lista_long = pd.melt(
-                df_lista, id_vars=columnas_fijas,
-                var_name='MES', value_name='PRECIO_LISTA'
-            )
-            df_bonif_long = pd.melt(
-                df_bonif, id_vars=columnas_fijas,
-                var_name='MES', value_name='PRECIO_BONIFICADO'
+            df_long = pd.melt(df_lista, id_vars=columnas_fijas, var_name='MES', value_name='PRECIO_LISTA')
+            df_bonif_long = pd.melt(df_bonif, id_vars=columnas_fijas, var_name='MES', value_name='PRECIO_BONIFICADO')
+
+            df_final = df_long.merge(
+                df_bonif_long[['ID', 'MES', 'PRECIO_BONIFICADO']],
+                on=['ID', 'MES'], how='left'
             )
 
-            # ── Merge por ID + MES
-            merge_keys = ['MES'] + ([c for c in ['ID'] if c in columnas_fijas])
-            df_final = df_lista_long.merge(
-                df_bonif_long[merge_keys + ['PRECIO_BONIFICADO']],
-                on=merge_keys, how='left'
-            )
-
-            # ── Limpiar precios
             for col in ['PRECIO_LISTA', 'PRECIO_BONIFICADO']:
-                df_final[col] = pd.to_numeric(
-                    df_final[col].replace('-', np.nan), errors='coerce'
-                )
+                df_final[col] = pd.to_numeric(df_final[col].replace('-', np.nan), errors='coerce')
 
-            # ── Parsear fecha
             mes_map = {
-                'Enero': 1, 'Febrero': 2, 'Marzo': 3, 'Abril': 4,
-                'Mayo': 5, 'Junio': 6, 'Julio': 7, 'Agosto': 8,
-                'Septiembre': 9, 'Octubre': 10, 'Noviembre': 11, 'Diciembre': 12
+                'Enero':1,'Febrero':2,'Marzo':3,'Abril':4,
+                'Mayo':5,'Junio':6,'Julio':7,'Agosto':8,
+                'Septiembre':9,'Octubre':10,'Noviembre':11,'Diciembre':12
             }
             df_final['MES_NUM'] = df_final['MES'].str.split(' ').str[0].map(mes_map)
-            df_final['ANIO'] = df_final['MES'].str.split(' ').str[1].astype(int, errors='ignore')
-            df_final['FECHA'] = pd.to_datetime(
+            df_final['ANIO']    = pd.to_numeric(df_final['MES'].str.split(' ').str[1], errors='coerce')
+            df_final['FECHA']   = pd.to_datetime(
                 df_final['ANIO'].astype(str) + '-' + df_final['MES_NUM'].astype(str) + '-01',
                 errors='coerce'
             )
+            df_final = df_final.sort_values(['ID', 'ANIO', 'MES_NUM']).reset_index(drop=True)
 
-            # ── Ordenar
-            sort_cols = (['ID'] if 'ID' in df_final.columns else ['MARCA', 'Modelo']) + ['ANIO', 'MES_NUM']
-            df_final = df_final.sort_values(sort_cols).reset_index(drop=True)
+            # ── Filtro SUV
+            if 'Segmento' in df_final.columns:
+                df_final = df_final[
+                    df_final['Segmento'].str.contains(r'\bSUV\b', case=False, na=False)
+                ].copy()
 
-            # ── Métricas derivadas
-            group_id = 'ID' if 'ID' in df_final.columns else ['MARCA', 'Modelo', 'Versión']
+            # ── Métricas
+            df_final['DIF_LB_NOM']  = df_final['PRECIO_LISTA'] - df_final['PRECIO_BONIFICADO']
+            df_final['DIF_LB_PCT']  = df_final['DIF_LB_NOM'] / df_final['PRECIO_LISTA']
+            df_final['VAR_LISTA_NOM'] = df_final.groupby('ID')['PRECIO_LISTA'].diff()
+            df_final['VAR_LISTA_PCT'] = df_final.groupby('ID')['PRECIO_LISTA'].pct_change()
+            df_final['VAR_BONIF_NOM'] = df_final.groupby('ID')['PRECIO_BONIFICADO'].diff()
+            df_final['VAR_BONIF_PCT'] = df_final.groupby('ID')['PRECIO_BONIFICADO'].pct_change()
 
-            df_final['DIF_LB_NOM'] = df_final['PRECIO_LISTA'] - df_final['PRECIO_BONIFICADO']
-            df_final['DIF_LB_PCT'] = df_final['DIF_LB_NOM'] / df_final['PRECIO_LISTA']
+            # ── Agregado por MARCA + Modelo + Versión + MES
+            grp = [c for c in ['MARCA','Modelo','Versión','MES','MES_NUM','ANIO','FECHA'] if c in df_final.columns]
+            agg_cols = ['PRECIO_LISTA','PRECIO_BONIFICADO','DIF_LB_NOM','DIF_LB_PCT',
+                        'VAR_LISTA_NOM','VAR_LISTA_PCT','VAR_BONIF_NOM','VAR_BONIF_PCT']
+            agg_cols_ok = [c for c in agg_cols if c in df_final.columns]
 
-            df_final['VAR_LISTA_NOM'] = df_final.groupby(group_id)['PRECIO_LISTA'].diff()
-            df_final['VAR_LISTA_PCT'] = df_final.groupby(group_id)['PRECIO_LISTA'].pct_change()
-            df_final['VAR_BONIF_NOM'] = df_final.groupby(group_id)['PRECIO_BONIFICADO'].diff()
-            df_final['VAR_BONIF_PCT'] = df_final.groupby(group_id)['PRECIO_BONIFICADO'].pct_change()
-
-            # ── Agregación por MARCA + Modelo + MES
-            agg_cols = ['PRECIO_LISTA', 'PRECIO_BONIFICADO', 'DIF_LB_NOM', 'DIF_LB_PCT',
-                        'VAR_LISTA_NOM', 'VAR_LISTA_PCT', 'VAR_BONIF_NOM', 'VAR_BONIF_PCT']
-            group_agg = [c for c in ['MARCA', 'Modelo', 'MES', 'MES_NUM', 'ANIO', 'FECHA'] if c in df_final.columns]
-
-            df_agg = (
-                df_final.groupby(group_agg, as_index=False)
-                .agg({c: ['mean', 'min', 'max'] for c in agg_cols if c in df_final.columns})
+            df_agg = df_final.groupby(grp, as_index=False).agg(
+                {c: ['mean','min','max'] for c in agg_cols_ok}
             )
             df_agg.columns = [
                 '_'.join(col).upper().strip('_') if col[1] else col[0]
                 for col in df_agg.columns
             ]
 
-            meses_detectados = sorted(fechas_lista)
-            return df_final, df_agg, meses_detectados, None
+            meses = sorted(fechas_lista)
+            return df_final, df_agg, meses, None
 
-        # Cargar y procesar
+        # ── Ejecutar ETL
         precios_bytes = uploaded_precios.getvalue()
-        result = etl_precios(precios_bytes)
+        df_pf, df_agg, meses_det, err = etl_precios_v2(precios_bytes)
 
-        if len(result) == 2:
-            df_p, error_msg = result
-            st.markdown(f'<div class="astara-warning">❌ {error_msg}</div>', unsafe_allow_html=True)
+        if err:
+            st.markdown(f'<div class="astara-warning">❌ {err}</div>', unsafe_allow_html=True)
+            st.stop()
+
+        # ── Métricas header
+        n_vers   = df_pf['ID'].nunique() if 'ID' in df_pf.columns else len(df_pf)
+        n_marcas = df_pf['MARCA'].nunique() if 'MARCA' in df_pf.columns else '—'
+        n_mod    = df_pf['Modelo'].nunique() if 'Modelo' in df_pf.columns else '—'
+        n_meses  = len(meses_det)
+
+        st.markdown(f"""
+        <div class="astara-success">
+            ✅&nbsp;&nbsp;<strong>Dataset transformado</strong> —
+            {len(df_pf):,} registros · <strong style="color:#F0B74D">{n_meses}</strong> meses detectados
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="metric-row">
+            <div class="metric-card">
+                <div class="metric-label">Registros</div>
+                <div class="metric-value">{len(df_pf):,}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Marcas</div>
+                <div class="metric-value"><span>{n_marcas}</span></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Modelos</div>
+                <div class="metric-value"><span>{n_mod}</span></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Meses</div>
+                <div class="metric-value"><span>{n_meses}</span></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ══════════════════════════════════════════════
+        # FILTROS GLOBALES
+        # ══════════════════════════════════════════════
+        st.markdown('<p class="section-title">Filtros</p>', unsafe_allow_html=True)
+        fc1, fc2, fc3 = st.columns(3)
+
+        with fc1:
+            marcas_disp = sorted(df_agg['MARCA'].dropna().unique()) if 'MARCA' in df_agg.columns else []
+            marcas_sel = st.multiselect("Marca", marcas_disp, default=marcas_disp, key="g_marca")
+
+        df_f1 = df_agg[df_agg['MARCA'].isin(marcas_sel)] if marcas_sel else df_agg.copy()
+
+        with fc2:
+            modelos_disp = sorted(df_f1['Modelo'].dropna().unique()) if 'Modelo' in df_f1.columns else []
+            modelos_sel = st.multiselect("Modelo", modelos_disp, key="g_modelo")
+
+        df_f2 = df_f1[df_f1['Modelo'].isin(modelos_sel)] if modelos_sel else df_f1.copy()
+
+        with fc3:
+            versiones_disp = sorted(df_f2['Versión'].dropna().unique()) if 'Versión' in df_f2.columns else []
+            versiones_sel = st.multiselect("Versión", versiones_disp, key="g_version")
+
+        df_graf = df_f2[df_f2['Versión'].isin(versiones_sel)].copy() if versiones_sel else df_f2.copy()
+
+        if 'FECHA' in df_graf.columns:
+            df_graf['FECHA'] = pd.to_datetime(df_graf['FECHA'], errors='coerce')
+            df_graf = df_graf.sort_values('FECHA')
+
+        df_graf['ETIQUETA'] = df_graf['MARCA'] + ' · ' + df_graf['Modelo'] + ' · ' + df_graf['Versión']
+
+        if df_graf.empty:
+            st.markdown('<div class="astara-warning">⚠️ Sin datos para los filtros seleccionados.</div>', unsafe_allow_html=True)
         else:
-            df_precios_final, df_precios_agg, meses_detectados, error_msg = result
+            etiquetas = sorted(df_graf['ETIQUETA'].dropna().unique())
+            color_map = {e: PLOTLY_COLORS[i % len(PLOTLY_COLORS)] for i, e in enumerate(etiquetas)}
 
-            if error_msg:
-                st.markdown(f'<div class="astara-warning">❌ {error_msg}</div>', unsafe_allow_html=True)
-            else:
-                # ── Métricas
-                n_versiones = df_precios_final['ID'].nunique() if 'ID' in df_precios_final.columns else len(df_precios_final)
-                n_marcas = df_precios_final['MARCA'].nunique() if 'MARCA' in df_precios_final.columns else '—'
-                n_modelos = df_precios_final['Modelo'].nunique() if 'Modelo' in df_precios_final.columns else '—'
-                n_meses = len(meses_detectados)
+            PLOTLY_LAYOUT = dict(
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(family='Inter', color='#D4C9F0', size=12),
+                legend=dict(
+                    bgcolor='rgba(38,29,62,0.9)',
+                    bordercolor='#3A2F5A',
+                    borderwidth=1,
+                    font=dict(size=10),
+                ),
+                xaxis=dict(gridcolor='#3A2F5A', linecolor='#3A2F5A', tickfont=dict(size=10)),
+                yaxis=dict(gridcolor='#3A2F5A', linecolor='#3A2F5A', tickfont=dict(size=10)),
+                margin=dict(l=50, r=20, t=50, b=60),
+                hoverlabel=dict(bgcolor='#261D3E', bordercolor='#F0B74D', font_color='#D4C9F0'),
+            )
 
-                st.markdown(f"""
-                <div class="astara-success">
-                    ✅&nbsp;&nbsp;<strong>Dataset transformado</strong> —
-                    {len(df_precios_final):,} registros · {n_meses} meses detectados automáticamente
-                </div>
-                """, unsafe_allow_html=True)
+            # ══════════════════════════════════════════════
+            # GRÁFICO 1 — EVOLUCIÓN PRECIO LISTA Y BONIFICADO
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Evolución mensual · Precio lista vs bonificado</p>', unsafe_allow_html=True)
 
-                st.markdown(f"""
-                <div class="metric-row">
-                    <div class="metric-card">
-                        <div class="metric-label">Registros</div>
-                        <div class="metric-value">{len(df_precios_final):,}</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Marcas</div>
-                        <div class="metric-value"><span>{n_marcas}</span></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Modelos</div>
-                        <div class="metric-value"><span>{n_modelos}</span></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Meses</div>
-                        <div class="metric-value"><span>{n_meses}</span></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            precio_tipo = st.radio(
+                "Mostrar",
+                ["Ambos", "Solo Lista", "Solo Bonificado"],
+                horizontal=True, key="r_precio_tipo"
+            )
 
-                # ── Meses detectados
-                st.markdown('<p class="section-title">Meses detectados automáticamente</p>', unsafe_allow_html=True)
-                meses_html = "".join([
-                    f'<span style="background:#261D3E;border:1px solid #3A2F5A;border-radius:6px;'
-                    f'padding:3px 10px;font-size:0.75rem;color:#F0B74D;margin:2px;display:inline-block;">{m}</span>'
-                    for m in meses_detectados
-                ])
-                st.markdown(f'<div style="line-height:2.2;margin-bottom:1rem">{meses_html}</div>', unsafe_allow_html=True)
+            fig1 = go.Figure()
+            for etiq in etiquetas:
+                df_e = df_graf[df_graf['ETIQUETA'] == etiq]
+                color = color_map[etiq]
+                if precio_tipo in ["Ambos", "Solo Lista"] and 'PRECIO_LISTA_MEAN' in df_e.columns:
+                    fig1.add_trace(go.Scatter(
+                        x=df_e['FECHA'], y=df_e['PRECIO_LISTA_MEAN'],
+                        name=f"{etiq} · Lista",
+                        line=dict(color=color, width=2),
+                        mode='lines+markers', marker=dict(size=5),
+                        hovertemplate='<b>%{fullData.name}</b><br>Fecha: %{x|%b %Y}<br>Precio Lista: $%{y:,.0f}<extra></extra>'
+                    ))
+                if precio_tipo in ["Ambos", "Solo Bonificado"] and 'PRECIO_BONIFICADO_MEAN' in df_e.columns:
+                    fig1.add_trace(go.Scatter(
+                        x=df_e['FECHA'], y=df_e['PRECIO_BONIFICADO_MEAN'],
+                        name=f"{etiq} · Bonif.",
+                        line=dict(color=color, width=2, dash='dot'),
+                        mode='lines+markers', marker=dict(size=5, symbol='diamond'),
+                        hovertemplate='<b>%{fullData.name}</b><br>Fecha: %{x|%b %Y}<br>Precio Bonif: $%{y:,.0f}<extra></extra>'
+                    ))
 
-                # ── Explorar
-                st.markdown('<p class="section-title">Explorar resultado — detalle por versión</p>', unsafe_allow_html=True)
-                col_p1, col_p2, col_p3 = st.columns(3)
-                with col_p1:
-                    marcas_p = sorted(df_precios_final['MARCA'].dropna().unique()) if 'MARCA' in df_precios_final.columns else []
-                    marca_p_filtro = st.multiselect("Marca", marcas_p, default=marcas_p, key="pf_marca")
-                with col_p2:
-                    df_tmp = df_precios_final[df_precios_final['MARCA'].isin(marca_p_filtro)] if marca_p_filtro else df_precios_final
-                    modelos_p = sorted(df_tmp['Modelo'].dropna().unique()) if 'Modelo' in df_tmp.columns else []
-                    modelo_p_filtro = st.multiselect("Modelo", modelos_p, key="pf_modelo")
-                with col_p3:
-                    periodos_p = sorted(df_precios_final['MES'].dropna().unique()) if 'MES' in df_precios_final.columns else []
-                    periodo_p_filtro = st.multiselect("Mes", periodos_p, key="pf_mes")
+            fig1.update_layout(**PLOTLY_LAYOUT, title=dict(text="Evolución de Precios", font=dict(color='#F0B74D', size=14)), height=420)
+            fig1.update_yaxes(tickprefix="$", tickformat=",.0f")
+            st.plotly_chart(fig1, use_container_width=True)
 
-                df_p_vista = df_precios_final.copy()
-                if marca_p_filtro:   df_p_vista = df_p_vista[df_p_vista['MARCA'].isin(marca_p_filtro)]
-                if modelo_p_filtro:  df_p_vista = df_p_vista[df_p_vista['Modelo'].isin(modelo_p_filtro)]
-                if periodo_p_filtro: df_p_vista = df_p_vista[df_p_vista['MES'].isin(periodo_p_filtro)]
+            # ══════════════════════════════════════════════
+            # GRÁFICO 2 — DESCUENTO % (Lista vs Bonificado)
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Descuento mensual · % lista vs bonificado</p>', unsafe_allow_html=True)
 
-                # Format pct columns
-                pct_cols = [c for c in df_p_vista.columns if 'PCT' in c]
-                df_display = df_p_vista.copy()
-                for c in pct_cols:
-                    df_display[c] = df_display[c].map(lambda x: f"{x:.1%}" if pd.notna(x) else "")
+            if 'DIF_LB_PCT_MEAN' in df_graf.columns:
+                fig2 = go.Figure()
+                for etiq in etiquetas:
+                    df_e = df_graf[df_graf['ETIQUETA'] == etiq]
+                    fig2.add_trace(go.Scatter(
+                        x=df_e['FECHA'],
+                        y=(df_e['DIF_LB_PCT_MEAN'] * 100).round(2),
+                        name=etiq,
+                        line=dict(color=color_map[etiq], width=2),
+                        mode='lines+markers', marker=dict(size=5),
+                        hovertemplate='<b>%{fullData.name}</b><br>Fecha: %{x|%b %Y}<br>Descuento: %{y:.2f}%<extra></extra>'
+                    ))
+                fig2.update_layout(**PLOTLY_LAYOUT, title=dict(text="% Descuento sobre Precio Lista", font=dict(color='#F0B74D', size=14)), height=380)
+                fig2.update_yaxes(ticksuffix="%", tickformat=".1f")
+                fig2.add_hline(y=0, line_dash="dot", line_color="#3A2F5A")
+                st.plotly_chart(fig2, use_container_width=True)
 
-                st.markdown(f'<div style="font-size:0.75rem;color:#444;margin-bottom:0.4rem;">{len(df_p_vista):,} registros visibles</div>', unsafe_allow_html=True)
-                st.dataframe(df_display, use_container_width=True, height=380)
+            # ══════════════════════════════════════════════
+            # GRÁFICOS 3 y 4 — VARIACIONES MENSUALES
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Variación mensual de precios</p>', unsafe_allow_html=True)
+            col_g1, col_g2 = st.columns(2)
 
-                # ── Descarga — dos opciones
-                st.markdown('<p class="section-title">Exportar</p>', unsafe_allow_html=True)
-                col_d1, col_d2 = st.columns(2)
-
-                with col_d1:
-                    st.markdown('<div style="font-size:0.8rem;color:#9B8FBB;margin-bottom:0.4rem;">📄 Detalle por versión (formato largo)</div>', unsafe_allow_html=True)
-                    buf1 = io.BytesIO()
-                    df_precios_final.to_csv(buf1, index=False, encoding='utf-8-sig')
-                    buf1.seek(0)
-                    st.download_button(
-                        label="⬇️  Descargar detalle (.csv)",
-                        data=buf1,
-                        file_name="precios_detalle_largo.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="dl_precios_detalle"
+            with col_g1:
+                if 'VAR_LISTA_PCT_MEAN' in df_graf.columns:
+                    fig3 = go.Figure()
+                    for etiq in etiquetas:
+                        df_e = df_graf[df_graf['ETIQUETA'] == etiq]
+                        fig3.add_trace(go.Bar(
+                            x=df_e['FECHA'],
+                            y=(df_e['VAR_LISTA_PCT_MEAN'] * 100).round(2),
+                            name=etiq,
+                            marker_color=color_map[etiq],
+                            hovertemplate='<b>%{fullData.name}</b><br>%{x|%b %Y}<br>Var: %{y:.2f}%<extra></extra>'
+                        ))
+                    fig3.update_layout(
+                        **PLOTLY_LAYOUT, barmode='group',
+                        title=dict(text="Var. % Mensual · Precio Lista", font=dict(color='#F0B74D', size=13)),
+                        height=350, showlegend=False
                     )
+                    fig3.update_yaxes(ticksuffix="%")
+                    fig3.add_hline(y=0, line_dash="dot", line_color="#3A2F5A")
+                    st.plotly_chart(fig3, use_container_width=True)
 
-                with col_d2:
-                    st.markdown('<div style="font-size:0.8rem;color:#9B8FBB;margin-bottom:0.4rem;">📊 Agregado por marca + modelo + mes</div>', unsafe_allow_html=True)
-                    buf2 = io.BytesIO()
-                    df_precios_agg.to_csv(buf2, index=False, encoding='utf-8-sig')
-                    buf2.seek(0)
-                    st.download_button(
-                        label="⬇️  Descargar agregado (.csv)",
-                        data=buf2,
-                        file_name="precios_agregado_modelo_mes.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="dl_precios_agg"
+            with col_g2:
+                if 'VAR_BONIF_PCT_MEAN' in df_graf.columns:
+                    fig4 = go.Figure()
+                    for etiq in etiquetas:
+                        df_e = df_graf[df_graf['ETIQUETA'] == etiq]
+                        fig4.add_trace(go.Bar(
+                            x=df_e['FECHA'],
+                            y=(df_e['VAR_BONIF_PCT_MEAN'] * 100).round(2),
+                            name=etiq,
+                            marker_color=color_map[etiq],
+                            hovertemplate='<b>%{fullData.name}</b><br>%{x|%b %Y}<br>Var: %{y:.2f}%<extra></extra>'
+                        ))
+                    fig4.update_layout(
+                        **PLOTLY_LAYOUT, barmode='group',
+                        title=dict(text="Var. % Mensual · Precio Bonificado", font=dict(color='#F0B74D', size=13)),
+                        height=350, showlegend=False
                     )
+                    fig4.update_yaxes(ticksuffix="%")
+                    fig4.add_hline(y=0, line_dash="dot", line_color="#3A2F5A")
+                    st.plotly_chart(fig4, use_container_width=True)
+
+            # ══════════════════════════════════════════════
+            # GRÁFICO 5 — SNAPSHOT ÚLTIMO MES
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Snapshot último mes · Precio lista vs bonificado</p>', unsafe_allow_html=True)
+
+            ult_anio = df_graf['ANIO'].max()
+            ult_mes  = df_graf[df_graf['ANIO'] == ult_anio]['MES_NUM'].max()
+            df_ult   = df_graf[(df_graf['ANIO'] == ult_anio) & (df_graf['MES_NUM'] == ult_mes)].copy()
+            df_ult   = df_ult.sort_values('PRECIO_LISTA_MEAN')
+
+            if not df_ult.empty and 'PRECIO_LISTA_MEAN' in df_ult.columns:
+                fig5 = go.Figure()
+                fig5.add_trace(go.Bar(
+                    y=df_ult['ETIQUETA'], x=df_ult['PRECIO_LISTA_MEAN'],
+                    name='Precio Lista', orientation='h',
+                    marker_color=LIME, opacity=0.85,
+                    hovertemplate='<b>%{y}</b><br>Lista: $%{x:,.0f}<extra></extra>'
+                ))
+                if 'PRECIO_BONIFICADO_MEAN' in df_ult.columns:
+                    fig5.add_trace(go.Bar(
+                        y=df_ult['ETIQUETA'], x=df_ult['PRECIO_BONIFICADO_MEAN'],
+                        name='Precio Bonificado', orientation='h',
+                        marker_color='#7B6FE8', opacity=0.85,
+                        hovertemplate='<b>%{y}</b><br>Bonif.: $%{x:,.0f}<extra></extra>'
+                    ))
+                fig5.update_layout(
+                    **PLOTLY_LAYOUT, barmode='group',
+                    title=dict(
+                        text=f"Precios · {int(ult_mes):02d}/{int(ult_anio)}",
+                        font=dict(color='#F0B74D', size=14)
+                    ),
+                    height=max(350, len(df_ult) * 45),
+                    xaxis_tickprefix="$", xaxis_tickformat=",.0f",
+                )
+                st.plotly_chart(fig5, use_container_width=True)
+
+            # ══════════════════════════════════════════════
+            # TABLA + DESCARGA
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Tabla de datos filtrados</p>', unsafe_allow_html=True)
+
+            pct_cols = [c for c in df_graf.columns if 'PCT' in c]
+            df_show = df_graf.copy()
+            for c in pct_cols:
+                df_show[c] = df_show[c].map(lambda x: f"{x:.2%}" if pd.notna(x) else "")
+
+            st.markdown(f'<div style="font-size:0.75rem;color:#444;margin-bottom:0.4rem;">{len(df_graf):,} registros</div>', unsafe_allow_html=True)
+            st.dataframe(df_show.drop(columns=['ETIQUETA'], errors='ignore'), use_container_width=True, height=360)
+
+            st.markdown('<p class="section-title">Exportar</p>', unsafe_allow_html=True)
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                buf1 = io.BytesIO()
+                df_pf.to_csv(buf1, index=False, encoding='utf-8-sig')
+                buf1.seek(0)
+                st.download_button(
+                    label="⬇️  Detalle por versión (.csv)",
+                    data=buf1, file_name="precios_detalle.csv",
+                    mime="text/csv", use_container_width=True, key="dl_det"
+                )
+            with col_d2:
+                buf2 = io.BytesIO()
+                df_agg.to_csv(buf2, index=False, encoding='utf-8-sig')
+                buf2.seek(0)
+                st.download_button(
+                    label="⬇️  Agregado marca·modelo·versión (.csv)",
+                    data=buf2, file_name="precios_agregado.csv",
+                    mime="text/csv", use_container_width=True, key="dl_agg"
+                )
