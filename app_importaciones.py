@@ -805,7 +805,7 @@ st.markdown("""
 # ══════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════
-tab1, tab2, tab3 = st.tabs(["📦  Importaciones SUV", "💲  Precios Nyvus", "🚘  Inmatriculaciones"])
+tab1, tab2, tab3, tab4 = st.tabs(["📦  Importaciones SUV", "💲  Precios Nyvus", "🚘  Inmatriculaciones", "🔗  Catálogo Maestro"])
 
 with tab1:
 
@@ -1758,3 +1758,314 @@ with tab3:
                     use_container_width=True,
                     key="dl_inmat"
                 )
+
+with tab4:
+    import io as _io
+    import hashlib
+
+    st.markdown("""
+    <div class="astara-info">
+        <strong>🔗 Matching Manual</strong> — Cargá los CSVs de las 3 fuentes,
+        seleccioná los registros que son el mismo vehículo y asignales un ID común.
+        Al final descargás un CSV unificado listo para el clustering.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════
+    # CARGA DE LAS 3 FUENTES
+    # ══════════════════════════════════════════════
+    st.markdown('<p class="section-title">Cargar datasets procesados</p>', unsafe_allow_html=True)
+
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        st.markdown('<div style="font-size:0.78rem;color:#9B8FBB;margin-bottom:4px;">📦 Importaciones SUV</div>', unsafe_allow_html=True)
+        f_imp = st.file_uploader("Importaciones", type=["csv"], key="cat_imp", label_visibility="collapsed")
+    with col_c2:
+        st.markdown('<div style="font-size:0.78rem;color:#9B8FBB;margin-bottom:4px;">💲 Precios Nyvus</div>', unsafe_allow_html=True)
+        f_pre = st.file_uploader("Precios", type=["csv"], key="cat_pre", label_visibility="collapsed")
+    with col_c3:
+        st.markdown('<div style="font-size:0.78rem;color:#9B8FBB;margin-bottom:4px;">🚘 Inmatriculaciones</div>', unsafe_allow_html=True)
+        f_inm = st.file_uploader("Inmatriculaciones", type=["csv"], key="cat_inm", label_visibility="collapsed")
+
+    # badges de estado
+    badges = ""
+    for name, f in [("Importaciones", f_imp), ("Precios", f_pre), ("Inmatriculaciones", f_inm)]:
+        color = "#F0B74D" if f else "#3A2F5A"
+        icon  = "✅" if f else "⬜"
+        badges += f'<span style="background:#261D3E;border:1px solid {color};border-radius:6px;padding:4px 12px;font-size:0.78rem;color:{color};margin:3px;display:inline-block;">{icon} {name}</span>'
+    st.markdown(f'<div style="margin:0.5rem 0 1rem">{badges}</div>', unsafe_allow_html=True)
+
+    loaded_any = any([f_imp, f_pre, f_inm])
+
+    if not loaded_any:
+        st.markdown("""
+        <div class="steps-grid">
+            <div class="step-card"><div class="step-number">01</div><div class="step-text"><strong>Exportá los CSVs</strong>Desde cada tab procesá y descargá el CSV correspondiente</div></div>
+            <div class="step-card"><div class="step-number">02</div><div class="step-text"><strong>Cargalos acá</strong>Podés subir 1, 2 o las 3 fuentes</div></div>
+            <div class="step-card"><div class="step-number">03</div><div class="step-text"><strong>Seleccioná y asigná</strong>Marcá los registros que son el mismo vehículo y asignales un ID</div></div>
+            <div class="step-card"><div class="step-number">04</div><div class="step-text"><strong>Descargá el catálogo</strong>CSV con VEHICLE_ID listo para el JOIN y clustering</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    else:
+        # ══════════════════════════════════════════════
+        # EXTRAER VALORES ÚNICOS DE CADA FUENTE
+        # ══════════════════════════════════════════════
+        @st.cache_data(show_spinner="Leyendo fuentes...")
+        def extraer_unicos(imp_b, pre_b, inm_b):
+            import io
+            registros = []
+
+            if imp_b:
+                df = pd.read_csv(io.BytesIO(imp_b), encoding="utf-8")
+                col_m  = next((c for c in df.columns if c.upper() == "MARCA"), None)
+                col_mo = next((c for c in df.columns if c.upper() == "MODELO"), None)
+                col_v  = next((c for c in df.columns if c.lower() == "version"), None)
+                if col_m and col_mo:
+                    sub = df[[col_m, col_mo] + ([col_v] if col_v else [])].copy()
+                    sub.columns = ["MARCA","MODELO"] + (["VERSION"] if col_v else [])
+                    if "VERSION" not in sub.columns: sub["VERSION"] = ""
+                    sub = sub.dropna(subset=["MARCA","MODELO"]).drop_duplicates()
+                    sub["FUENTE"] = "IMP"
+                    registros.append(sub)
+
+            if pre_b:
+                df = pd.read_csv(io.BytesIO(pre_b), encoding="utf-8")
+                col_m  = next((c for c in df.columns if c.upper() == "MARCA"), None)
+                col_mo = next((c for c in df.columns if "modelo" in c.lower()), None)
+                col_v  = next((c for c in df.columns if "versi" in c.lower()), None)
+                if col_m and col_mo:
+                    sub = df[[col_m, col_mo] + ([col_v] if col_v else [])].copy()
+                    sub.columns = ["MARCA","MODELO"] + (["VERSION"] if col_v else [])
+                    if "VERSION" not in sub.columns: sub["VERSION"] = ""
+                    sub = sub.dropna(subset=["MARCA","MODELO"]).drop_duplicates()
+                    sub["FUENTE"] = "PRE"
+                    registros.append(sub)
+
+            if inm_b:
+                df = pd.read_csv(io.BytesIO(inm_b), encoding="utf-8")
+                col_m  = next((c for c in df.columns if "marca" in c.lower()), None)
+                col_mo = next((c for c in df.columns if "modelo" in c.lower()), None)
+                col_v  = next((c for c in df.columns if "version" in c.lower()), None)
+                if col_m and col_mo:
+                    sub = df[[col_m, col_mo] + ([col_v] if col_v else [])].copy()
+                    sub.columns = ["MARCA","MODELO"] + (["VERSION"] if col_v else [])
+                    if "VERSION" not in sub.columns: sub["VERSION"] = ""
+                    sub = sub.dropna(subset=["MARCA","MODELO"]).drop_duplicates()
+                    sub["FUENTE"] = "INM"
+                    registros.append(sub)
+
+            if not registros:
+                return pd.DataFrame()
+
+            df_all = pd.concat(registros, ignore_index=True)
+            df_all["MARCA"]   = df_all["MARCA"].astype(str).str.upper().str.strip()
+            df_all["MODELO"]  = df_all["MODELO"].astype(str).str.upper().str.strip()
+            df_all["VERSION"] = df_all["VERSION"].astype(str).str.strip()
+            df_all["VERSION"] = df_all["VERSION"].replace({"nan":"","None":"","(en blanco)":"","SIN VERSION":""})
+            df_all = df_all.drop_duplicates(subset=["FUENTE","MARCA","MODELO","VERSION"])
+            df_all = df_all.sort_values(["MARCA","MODELO","VERSION","FUENTE"]).reset_index(drop=True)
+            df_all["ROW_ID"] = df_all.index
+            df_all["VEHICLE_ID"] = ""
+            return df_all
+
+        imp_b = f_imp.getvalue() if f_imp else None
+        pre_b = f_pre.getvalue() if f_pre else None
+        inm_b = f_inm.getvalue() if f_inm else None
+
+        df_all = extraer_unicos(imp_b, pre_b, inm_b)
+
+        if df_all.empty:
+            st.markdown('<div class="astara-warning">❌ No se pudieron extraer registros.</div>', unsafe_allow_html=True)
+        else:
+            # Inicializar estado de IDs en session_state
+            if "vehicle_ids" not in st.session_state:
+                st.session_state.vehicle_ids = {}
+            if "id_counter" not in st.session_state:
+                st.session_state.id_counter = 1
+
+            # ── KPIs
+            n_total    = len(df_all)
+            n_asignados = sum(1 for rid in df_all["ROW_ID"] if st.session_state.vehicle_ids.get(rid, "") != "")
+            n_pendientes = n_total - n_asignados
+
+            st.markdown(f"""
+            <div class="metric-row">
+                <div class="metric-card"><div class="metric-label">Registros totales</div><div class="metric-value">{n_total:,}</div></div>
+                <div class="metric-card"><div class="metric-label">Asignados</div><div class="metric-value"><span>{n_asignados}</span></div></div>
+                <div class="metric-card"><div class="metric-label">Pendientes</div><div class="metric-value">{n_pendientes}</div></div>
+                <div class="metric-card"><div class="metric-label">IDs únicos</div><div class="metric-value"><span>{len(set(v for v in st.session_state.vehicle_ids.values() if v))}</span></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ══════════════════════════════════════════════
+            # FILTROS
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Filtros</p>', unsafe_allow_html=True)
+            col_f1, col_f2, col_f3 = st.columns(3)
+
+            with col_f1:
+                marcas_disp = ["Todas"] + sorted(df_all["MARCA"].dropna().unique())
+                marca_sel = st.selectbox("Marca", marcas_disp, key="match_marca")
+            with col_f2:
+                estado_sel = st.selectbox("Estado", ["Todos", "Sin asignar", "Asignados"], key="match_estado")
+            with col_f3:
+                fuente_sel = st.multiselect(
+                    "Fuente", ["IMP","PRE","INM"],
+                    default=["IMP","PRE","INM"], key="match_fuente"
+                )
+
+            # Aplicar filtros
+            df_view = df_all.copy()
+            if marca_sel != "Todas":
+                df_view = df_view[df_view["MARCA"] == marca_sel]
+            if fuente_sel:
+                df_view = df_view[df_view["FUENTE"].isin(fuente_sel)]
+            if estado_sel == "Sin asignar":
+                df_view = df_view[df_view["ROW_ID"].apply(lambda r: st.session_state.vehicle_ids.get(r, "") == "")]
+            elif estado_sel == "Asignados":
+                df_view = df_view[df_view["ROW_ID"].apply(lambda r: st.session_state.vehicle_ids.get(r, "") != "")]
+
+            st.markdown(f'<div style="font-size:0.75rem;color:#555;margin-bottom:0.5rem;">{len(df_view)} registros visibles</div>', unsafe_allow_html=True)
+
+            # ══════════════════════════════════════════════
+            # TABLA DE MATCHING
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Asignación de IDs</p>', unsafe_allow_html=True)
+
+            # Leyenda de fuentes
+            st.markdown("""
+            <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <span style="background:#261D3E;border:1px solid #F0B74D;border-radius:4px;padding:2px 10px;font-size:0.72rem;color:#F0B74D;">IMP = Importaciones</span>
+                <span style="background:#261D3E;border:1px solid #7B6FE8;border-radius:4px;padding:2px 10px;font-size:0.72rem;color:#7B6FE8;">PRE = Precios</span>
+                <span style="background:#261D3E;border:1px solid #4FC3C3;border-radius:4px;padding:2px 10px;font-size:0.72rem;color:#4FC3C3;">INM = Inmatriculaciones</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Render tabla fila por fila
+            FUENTE_COLORS = {"IMP": "#F0B74D", "PRE": "#7B6FE8", "INM": "#4FC3C3"}
+
+            # Agrupar por marca para separar visualmente
+            marcas_en_vista = df_view["MARCA"].unique()
+
+            for marca in sorted(marcas_en_vista):
+                df_marca = df_view[df_view["MARCA"] == marca]
+
+                with st.expander(f"**{marca}** — {len(df_marca)} registros", expanded=(len(marcas_en_vista) <= 3)):
+                    # Selector múltiple de filas + botón asignar
+                    col_sel, col_btn = st.columns([4, 1])
+
+                    with col_sel:
+                        opciones = []
+                        for _, row in df_marca.iterrows():
+                            vid = st.session_state.vehicle_ids.get(row["ROW_ID"], "")
+                            ver = f" · {row['VERSION']}" if row["VERSION"] else ""
+                            tag_id = f" [{vid}]" if vid else " [sin ID]"
+                            opciones.append(f"{row['FUENTE']} · {row['MODELO']}{ver}{tag_id}")
+
+                        seleccion = st.multiselect(
+                            "Seleccioná los registros que son el mismo vehículo:",
+                            options=list(range(len(opciones))),
+                            format_func=lambda i: opciones[i],
+                            key=f"sel_{marca}",
+                            label_visibility="visible"
+                        )
+
+                    with col_btn:
+                        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+
+                        # Botón asignar nuevo ID
+                        if st.button("➕ Nuevo ID", key=f"new_{marca}", use_container_width=True):
+                            if seleccion:
+                                nuevo_id = f"VEH_{st.session_state.id_counter:04d}"
+                                st.session_state.id_counter += 1
+                                rows_marca = list(df_marca["ROW_ID"])
+                                for idx_sel in seleccion:
+                                    st.session_state.vehicle_ids[rows_marca[idx_sel]] = nuevo_id
+                                st.rerun()
+
+                        # Botón asignar a ID existente
+                        ids_existentes = sorted(set(v for v in st.session_state.vehicle_ids.values() if v))
+                        if ids_existentes:
+                            id_existente = st.selectbox(
+                                "O asignar a:",
+                                ["—"] + ids_existentes,
+                                key=f"existing_{marca}",
+                                label_visibility="collapsed"
+                            )
+                            if st.button("Asignar", key=f"assign_existing_{marca}", use_container_width=True):
+                                if seleccion and id_existente != "—":
+                                    rows_marca = list(df_marca["ROW_ID"])
+                                    for idx_sel in seleccion:
+                                        st.session_state.vehicle_ids[rows_marca[idx_sel]] = id_existente
+                                    st.rerun()
+
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    # Botón quitar ID
+                    if st.button("🗑 Quitar ID seleccionados", key=f"clear_{marca}", use_container_width=False):
+                        if seleccion:
+                            rows_marca = list(df_marca["ROW_ID"])
+                            for idx_sel in seleccion:
+                                st.session_state.vehicle_ids.pop(rows_marca[idx_sel], None)
+                            st.rerun()
+
+            # ══════════════════════════════════════════════
+            # EXPORTAR
+            # ══════════════════════════════════════════════
+            st.markdown('<p class="section-title">Exportar catálogo</p>', unsafe_allow_html=True)
+
+            # Construir df final con IDs asignados
+            df_export = df_all.copy()
+            df_export["VEHICLE_ID"] = df_export["ROW_ID"].apply(
+                lambda r: st.session_state.vehicle_ids.get(r, "")
+            )
+
+            n_con_id = (df_export["VEHICLE_ID"] != "").sum()
+            n_sin_id = (df_export["VEHICLE_ID"] == "").sum()
+
+            col_e1, col_e2 = st.columns(2)
+
+            with col_e1:
+                buf_all = _io.BytesIO()
+                df_export[["VEHICLE_ID","FUENTE","MARCA","MODELO","VERSION"]].to_csv(
+                    buf_all, index=False, encoding="utf-8-sig"
+                )
+                buf_all.seek(0)
+                st.download_button(
+                    label=f"⬇️  Catálogo completo ({n_total} registros)",
+                    data=buf_all,
+                    file_name="catalogo_maestro.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_cat_all"
+                )
+
+            with col_e2:
+                df_solo_id = df_export[df_export["VEHICLE_ID"] != ""]
+                buf_id = _io.BytesIO()
+                df_solo_id[["VEHICLE_ID","FUENTE","MARCA","MODELO","VERSION"]].to_csv(
+                    buf_id, index=False, encoding="utf-8-sig"
+                )
+                buf_id.seek(0)
+                st.download_button(
+                    label=f"⬇️  Solo con ID asignado ({n_con_id} registros)",
+                    data=buf_id,
+                    file_name="catalogo_con_id.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_cat_id"
+                )
+
+            if n_sin_id > 0:
+                st.markdown(
+                    f'<div style="font-size:0.78rem;color:#9B8FBB;margin-top:0.5rem;">⚠️ {n_sin_id} registros aún sin ID asignado</div>',
+                    unsafe_allow_html=True
+                )
+
+            # Reset
+            st.markdown("---")
+            if st.button("🔄 Reiniciar todos los IDs", key="reset_ids"):
+                st.session_state.vehicle_ids = {}
+                st.session_state.id_counter = 1
+                st.rerun()
