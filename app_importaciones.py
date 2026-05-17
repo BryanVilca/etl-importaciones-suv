@@ -793,7 +793,6 @@ tab1, tab2 = st.tabs(["📦  Importaciones SUV", "💲  Precios Nyvus"])
 
 with tab1:
 
-    # ── Uploader y botón DENTRO del tab (aislado del tab de precios)
     col_up, col_btn = st.columns([3, 1])
     with col_up:
         uploaded_file = st.file_uploader(
@@ -807,194 +806,128 @@ with tab1:
         procesar_btn = st.button("🚀 Procesar ETL", type="primary", use_container_width=True, key="btn_etl")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════════
-    # LANDING
-    # ══════════════════════════════════════════════
     if uploaded_file is None:
         st.markdown("""
         <div class="astara-info">
             <strong>⬆️ Subí el dataset consolidado Veritrade</strong> para comenzar el procesamiento ETL.
         </div>
         """, unsafe_allow_html=True)
-
         st.markdown('<p class="section-title">Cómo funciona</p>', unsafe_allow_html=True)
         st.markdown("""
         <div class="steps-grid">
-            <div class="step-card">
-                <div class="step-number">01</div>
-                <div class="step-text">
-                    <strong>Cargá el dataset</strong>
-                    Subí el consolidado Veritrade en formato .xlsx o .csv desde el sidebar.
-                </div>
-            </div>
-            <div class="step-card">
-                <div class="step-number">02</div>
-                <div class="step-text">
-                    <strong>Seleccioná marcas</strong>
-                    Elegí una o todas las marcas que querés incluir en el procesamiento.
-                </div>
-            </div>
-            <div class="step-card">
-                <div class="step-number">03</div>
-                <div class="step-text">
-                    <strong>Ejecutá el ETL</strong>
-                    La app filtra SUVs, aplica el parser específico de cada marca y consolida el resultado.
-                </div>
-            </div>
-            <div class="step-card">
-                <div class="step-number">04</div>
-                <div class="step-text">
-                    <strong>Descargá el CSV</strong>
-                    Exportá el dataset limpio con MARCA, MODELO, VERSION, AÑO, FOB, FLETE y SEGURO.
-                </div>
-            </div>
+            <div class="step-card"><div class="step-number">01</div><div class="step-text"><strong>Cargá el dataset</strong>Subí el consolidado Veritrade en .xlsx o .csv.</div></div>
+            <div class="step-card"><div class="step-number">02</div><div class="step-text"><strong>Seleccioná marcas</strong>Elegí las marcas desde el panel lateral.</div></div>
+            <div class="step-card"><div class="step-number">03</div><div class="step-text"><strong>Ejecutá el ETL</strong>La app filtra SUVs, parsea cada marca y consolida.</div></div>
+            <div class="step-card"><div class="step-number">04</div><div class="step-text"><strong>Descargá el CSV</strong>Exportá el dataset limpio listo para análisis.</div></div>
         </div>
         """, unsafe_allow_html=True)
-
         st.markdown('<p class="section-title">Marcas soportadas</p>', unsafe_allow_html=True)
         marcas_html = "".join([
-            f'<span style="background:#261D3E;border:1px solid #3A2F5A;border-radius:6px;'
-            f'padding:4px 14px;font-size:0.78rem;color:#AAA;margin:3px;display:inline-block;'
-            f'letter-spacing:0.04em;font-weight:500;">{m}</span>'
+            f'<span style="background:#261D3E;border:1px solid #3A2F5A;border-radius:6px;padding:4px 14px;font-size:0.78rem;color:#AAA;margin:3px;display:inline-block;">{m}</span>'
             for m in sorted(MARCAS_CONFIG.keys())
         ])
         st.markdown(f'<div style="line-height:2.4">{marcas_html}</div>', unsafe_allow_html=True)
-        st.stop()
 
+    else:
+        @st.cache_data(show_spinner="Leyendo archivo...")
+        def leer_archivo(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+            buf = io.BytesIO(file_bytes)
+            if file_name.endswith(".csv"):
+                return pd.read_csv(buf, encoding="latin1", on_bad_lines="skip")
+            return pd.read_excel(buf, engine="openpyxl", skiprows=5)
 
-    # ══════════════════════════════════════════════
-    # LEER ARCHIVO
-    # ══════════════════════════════════════════════
-    @st.cache_data(show_spinner="Leyendo archivo...")
-    def leer_archivo(file_bytes: bytes, file_name: str) -> pd.DataFrame:
-        buf = io.BytesIO(file_bytes)
-        if file_name.endswith(".csv"):
-            return pd.read_csv(buf, encoding="latin1", on_bad_lines="skip")
-        return pd.read_excel(buf, engine="openpyxl", skiprows=5)
+        nombre_archivo = uploaded_file.name
+        df_raw = leer_archivo(uploaded_file.getvalue(), nombre_archivo)
 
-    if uploaded_file is None:
-        st.stop()
-
-    nombre_archivo = uploaded_file.name
-    df_raw = leer_archivo(uploaded_file.getvalue(), nombre_archivo)
-
-    with st.expander("🔍  Vista previa del dataset cargado"):
-        st.markdown(f"""
-        <div style='font-size:0.78rem;color:#666;margin-bottom:0.6rem;'>
-            <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[0]:,} filas &nbsp;·&nbsp;
-            <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[1]} columnas &nbsp;·&nbsp;
-            <span style='color:#555'>{nombre_archivo}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        st.dataframe(df_raw.head(10), use_container_width=True)
-
-
-    # ══════════════════════════════════════════════
-    # PROCESAMIENTO
-    # ══════════════════════════════════════════════
-    if procesar_btn:
-        if not marcas_seleccionadas:
-            st.markdown('<div class="astara-warning">⚠️ Seleccioná al menos una marca para continuar.</div>', unsafe_allow_html=True)
-            st.stop()
-
-        with st.spinner("Ejecutando pipeline ETL..."):
-            df_resultado, errores = etl_pipeline(df_raw.copy(), marcas_seleccionadas)
-
-        if errores:
-            with st.expander("⚠️  Advertencias"):
-                for e in errores:
-                    st.markdown(f'<div class="astara-warning">{e}</div>', unsafe_allow_html=True)
-
-        if df_resultado.empty:
-            st.markdown('<div class="astara-warning">❌ No se generaron datos. Verificá la estructura del dataset.</div>', unsafe_allow_html=True)
-            st.stop()
-
-        # Success
-        st.markdown(f"""
-        <div class="astara-success">
-            ✅&nbsp;&nbsp;<strong>ETL completado</strong> —
-            {df_resultado.shape[0]:,} registros procesados para
-            <strong style="color:#F0B74D">{len(marcas_seleccionadas)}</strong> marca(s).
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Métricas
-        n_marcas   = df_resultado["MARCA"].nunique()   if "MARCA"   in df_resultado.columns else "—"
-        n_modelos  = df_resultado["modelo"].nunique()  if "modelo"  in df_resultado.columns else "—"
-        n_periodos = df_resultado["periodo"].nunique() if "periodo" in df_resultado.columns else "—"
-
-        st.markdown(f"""
-        <div class="metric-row">
-            <div class="metric-card">
-                <div class="metric-label">Registros</div>
-                <div class="metric-value">{df_resultado.shape[0]:,}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Marcas</div>
-                <div class="metric-value"><span>{n_marcas}</span></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Modelos únicos</div>
-                <div class="metric-value"><span>{n_modelos}</span></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Períodos</div>
-                <div class="metric-value"><span>{n_periodos}</span></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Explorar
-        st.markdown('<p class="section-title">Explorar resultado</p>', unsafe_allow_html=True)
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            marcas_res = sorted(df_resultado["MARCA"].dropna().unique()) if "MARCA" in df_resultado.columns else []
-            marca_filtro = st.multiselect("Marca", marcas_res, default=marcas_res)
-        with col_f2:
-            modelos_disp = sorted(
-                df_resultado[df_resultado["MARCA"].isin(marca_filtro)]["modelo"].dropna().unique()
-            ) if "modelo" in df_resultado.columns and marca_filtro else []
-            modelo_filtro = st.multiselect("Modelo", modelos_disp)
-        with col_f3:
-            periodos_disp = sorted(df_resultado["periodo"].dropna().unique()) if "periodo" in df_resultado.columns else []
-            periodo_filtro = st.multiselect("Período", periodos_disp)
-
-        df_vista = df_resultado.copy()
-        if marca_filtro:   df_vista = df_vista[df_vista["MARCA"].isin(marca_filtro)]
-        if modelo_filtro:  df_vista = df_vista[df_vista["modelo"].isin(modelo_filtro)]
-        if periodo_filtro: df_vista = df_vista[df_vista["periodo"].isin(periodo_filtro)]
-
-        st.markdown(
-            f'<div style="font-size:0.75rem;color:#444;margin-bottom:0.4rem;">'
-            f'{len(df_vista):,} registros visibles</div>',
-            unsafe_allow_html=True
-        )
-        st.dataframe(df_vista, use_container_width=True, height=420)
-
-        # Descarga
-        st.markdown('<p class="section-title">Exportar</p>', unsafe_allow_html=True)
-        col_d1, col_d2 = st.columns([3, 1])
-
-        with col_d1:
-            buffer = io.BytesIO()
-            df_resultado.to_csv(buffer, index=False, encoding="utf-8-sig")
-            buffer.seek(0)
-            st.download_button(
-                label="⬇️  Descargar dataset limpio (.csv)",
-                data=buffer,
-                file_name="dataset_importaciones_limpio.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-        with col_d2:
+        with st.expander("🔍  Vista previa del dataset cargado"):
             st.markdown(f"""
-            <div style='background:#261D3E;border:1px solid #3A2F5A;border-radius:10px;
-                        padding:0.9rem 1rem;font-size:0.78rem;color:#666;text-align:center;height:100%;
-                        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;'>
-                <span>{df_resultado.shape[0]:,} filas</span>
-                <span style='color:#F0B74D;font-weight:700;font-size:1rem'>{df_resultado.shape[1]} cols</span>
+            <div style='font-size:0.78rem;color:#666;margin-bottom:0.6rem;'>
+                <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[0]:,} filas &nbsp;·&nbsp;
+                <span style='color:#F0B74D'>■</span>&nbsp;{df_raw.shape[1]} columnas &nbsp;·&nbsp;
+                <span style='color:#555'>{nombre_archivo}</span>
             </div>
             """, unsafe_allow_html=True)
+            st.dataframe(df_raw.head(10), use_container_width=True)
+
+        if procesar_btn:
+            if not marcas_seleccionadas:
+                st.markdown('<div class="astara-warning">⚠️ Seleccioná al menos una marca para continuar.</div>', unsafe_allow_html=True)
+            else:
+                with st.spinner("Ejecutando pipeline ETL..."):
+                    df_resultado, errores = etl_pipeline(df_raw.copy(), marcas_seleccionadas)
+
+                if errores:
+                    with st.expander("⚠️  Advertencias"):
+                        for e in errores:
+                            st.markdown(f'<div class="astara-warning">{e}</div>', unsafe_allow_html=True)
+
+                if df_resultado.empty:
+                    st.markdown('<div class="astara-warning">❌ No se generaron datos. Verificá la estructura del dataset.</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="astara-success">
+                        ✅&nbsp;&nbsp;<strong>ETL completado</strong> —
+                        {df_resultado.shape[0]:,} registros procesados para
+                        <strong style="color:#F0B74D">{len(marcas_seleccionadas)}</strong> marca(s).
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    n_marcas   = df_resultado["MARCA"].nunique()   if "MARCA"   in df_resultado.columns else "—"
+                    n_modelos  = df_resultado["modelo"].nunique()  if "modelo"  in df_resultado.columns else "—"
+                    n_periodos = df_resultado["periodo"].nunique() if "periodo" in df_resultado.columns else "—"
+
+                    st.markdown(f"""
+                    <div class="metric-row">
+                        <div class="metric-card"><div class="metric-label">Registros</div><div class="metric-value">{df_resultado.shape[0]:,}</div></div>
+                        <div class="metric-card"><div class="metric-label">Marcas</div><div class="metric-value"><span>{n_marcas}</span></div></div>
+                        <div class="metric-card"><div class="metric-label">Modelos únicos</div><div class="metric-value"><span>{n_modelos}</span></div></div>
+                        <div class="metric-card"><div class="metric-label">Períodos</div><div class="metric-value"><span>{n_periodos}</span></div></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown('<p class="section-title">Explorar resultado</p>', unsafe_allow_html=True)
+                    col_f1, col_f2, col_f3 = st.columns(3)
+                    with col_f1:
+                        marcas_res = sorted(df_resultado["MARCA"].dropna().unique()) if "MARCA" in df_resultado.columns else []
+                        marca_filtro = st.multiselect("Marca", marcas_res, default=marcas_res)
+                    with col_f2:
+                        modelos_disp = sorted(
+                            df_resultado[df_resultado["MARCA"].isin(marca_filtro)]["modelo"].dropna().unique()
+                        ) if "modelo" in df_resultado.columns and marca_filtro else []
+                        modelo_filtro = st.multiselect("Modelo", modelos_disp)
+                    with col_f3:
+                        periodos_disp = sorted(df_resultado["periodo"].dropna().unique()) if "periodo" in df_resultado.columns else []
+                        periodo_filtro = st.multiselect("Período", periodos_disp)
+
+                    df_vista = df_resultado.copy()
+                    if marca_filtro:   df_vista = df_vista[df_vista["MARCA"].isin(marca_filtro)]
+                    if modelo_filtro:  df_vista = df_vista[df_vista["modelo"].isin(modelo_filtro)]
+                    if periodo_filtro: df_vista = df_vista[df_vista["periodo"].isin(periodo_filtro)]
+
+                    st.markdown(f'<div style="font-size:0.75rem;color:#444;margin-bottom:0.4rem;">{len(df_vista):,} registros visibles</div>', unsafe_allow_html=True)
+                    st.dataframe(df_vista, use_container_width=True, height=420)
+
+                    st.markdown('<p class="section-title">Exportar</p>', unsafe_allow_html=True)
+                    col_d1, col_d2 = st.columns([3, 1])
+                    with col_d1:
+                        buffer = io.BytesIO()
+                        df_resultado.to_csv(buffer, index=False, encoding="utf-8-sig")
+                        buffer.seek(0)
+                        st.download_button(
+                            label="⬇️  Descargar dataset limpio (.csv)",
+                            data=buffer,
+                            file_name="dataset_importaciones_limpio.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+                    with col_d2:
+                        st.markdown(f"""
+                        <div style='background:#1A1A1A;border:1px solid #2A2A2A;border-radius:10px;
+                                    padding:0.9rem 1rem;font-size:0.78rem;color:#666;text-align:center;'>
+                            {df_resultado.shape[0]:,} filas<br>
+                            <span style='color:#F0B74D;font-weight:700;font-size:1rem'>{df_resultado.shape[1]} cols</span>
+                        </div>
+                        """, unsafe_allow_html=True)
 
 with tab2:
     import numpy as np
