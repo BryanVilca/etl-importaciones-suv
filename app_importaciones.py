@@ -805,7 +805,7 @@ st.markdown("""
 # ══════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════
-tab1, tab2 = st.tabs(["📦  Importaciones SUV", "💲  Precios Nyvus"])
+tab1, tab2, tab3 = st.tabs(["📦  Importaciones SUV", "💲  Precios Nyvus", "🚘  Inmatriculaciones"])
 
 with tab1:
 
@@ -1356,4 +1356,398 @@ with tab2:
                     label="⬇️  Agregado marca·modelo·versión (.csv)",
                     data=buf2, file_name="precios_agregado.csv",
                     mime="text/csv", use_container_width=True, key="dl_agg"
+                )
+
+with tab3:
+    import plotly.graph_objects as go
+    import plotly.express as px
+
+    LIME   = "#F0B74D"
+    PURPLE = "#1E1932"
+    CARD   = "#261D3E"
+    BORDER = "#3A2F5A"
+    MUTED  = "#9B8FBB"
+    PLOTLY_COLORS = [
+        "#F0B74D","#7B6FE8","#4FC3C3","#E86F9A","#6FC87B",
+        "#E8A06F","#6FA8E8","#C36FD4","#E8D46F","#6FD4C3",
+        "#E87B7B","#9AE86F","#6F8CE8","#E8C36F","#C36FA8",
+    ]
+    PLOTLY_LAYOUT = dict(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter", color="#D4C9F0", size=12),
+        legend=dict(bgcolor="rgba(38,29,62,0.9)", bordercolor="#3A2F5A", borderwidth=1, font=dict(size=10)),
+        xaxis=dict(gridcolor="#3A2F5A", linecolor="#3A2F5A", tickfont=dict(size=10)),
+        yaxis=dict(gridcolor="#3A2F5A", linecolor="#3A2F5A", tickfont=dict(size=10)),
+        margin=dict(l=50, r=20, t=50, b=60),
+        hoverlabel=dict(bgcolor="#261D3E", bordercolor="#F0B74D", font_color="#D4C9F0"),
+    )
+
+    MARCAS_DISPONIBLES = ['KIA', 'DFSK', 'HYUNDAI', 'GEELY', 'SUBARU', 'CHANGAN', 'NISSAN', 'VOLKSWAGEN', 'JAC', 'CHERY', 'CHEVROLET', 'HONDA', 'MAZDA', 'SUZUKI', 'GREAT WALL', 'MITSUBISHI', 'RENAULT', 'HAVAL', 'JETOUR', 'PEUGEOT', 'GAC', 'JEEP', 'BYD', 'SWM', 'DONGFENG', 'JAECOO', 'OMODA', 'FORD']
+
+    st.markdown('<p class="section-title">Cargar dataset de inmatriculaciones</p>', unsafe_allow_html=True)
+
+    uploaded_inmat = st.file_uploader(
+        "Dataset Inmatriculaciones",
+        type=["xlsx", "xls"],
+        key="uploader_inmat",
+        label_visibility="collapsed",
+        help="Archivo Market_Results.xlsx del AAP"
+    )
+
+    if uploaded_inmat is None:
+        st.markdown("""
+        <div class="astara-info">
+            <strong>⬆️ Subí el archivo de inmatriculaciones</strong> (Market_Results.xlsx) para explorar el volumen de ventas por marca, modelo y versión.
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown('<p class="section-title">Qué vas a poder explorar</p>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="steps-grid">
+            <div class="step-card"><div class="step-number">01</div><div class="step-text"><strong>Volumen por marca</strong>Ranking de marcas SUV por unidades inmatriculadas en el período seleccionado</div></div>
+            <div class="step-card"><div class="step-number">02</div><div class="step-text"><strong>Evolución mensual</strong>Comportamiento mes a mes de inmatriculaciones por marca y modelo</div></div>
+            <div class="step-card"><div class="step-number">03</div><div class="step-text"><strong>Mix de modelos</strong>Participación de modelos dentro de cada marca y share de mercado</div></div>
+            <div class="step-card"><div class="step-number">04</div><div class="step-text"><strong>Detalle por versión</strong>Desglose hasta nivel de versión con filtros dinámicos</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        @st.cache_data(show_spinner="Procesando inmatriculaciones...")
+        def etl_inmatriculaciones(file_bytes: bytes, marcas_filtro: tuple) -> tuple:
+            import io
+            df = pd.read_excel(io.BytesIO(file_bytes))
+
+            # Filtrar SUV
+            col_carr = next((c for c in df.columns if "carroceria" in c.lower()), None)
+            col_marca = next((c for c in df.columns if "marca" in c.lower()), None)
+            col_modelo = next((c for c in df.columns if "modelo" in c.lower()), None)
+            col_anio = next((c for c in df.columns if c.upper() in ["AÑO", "ANO", "YEAR"]), None)
+            col_mes = next((c for c in df.columns if c.upper() == "MES"), None)
+            col_acum = next((c for c in df.columns if "acum" in c.lower()), None)
+            col_version = next((c for c in df.columns if "version" in c.lower()), None)
+            col_cat = next((c for c in df.columns if "categor" in c.lower()), None)
+
+            missing = [n for n, c in [
+                ("CARROCERIA", col_carr), ("MARCA", col_marca),
+                ("MODELO", col_modelo), ("ACUM", col_acum)
+            ] if c is None]
+            if missing:
+                return None, None, None, f"Columnas no encontradas: {missing}. Columnas disponibles: {list(df.columns[:20])}"
+
+            # Filtro SUV
+            df_suv = df[df[col_carr].astype(str).str.upper().str.contains("SUV", na=False)].copy()
+
+            # Filtro marcas
+            df_suv = df_suv[
+                df_suv[col_marca].astype(str).str.upper().apply(
+                    lambda x: any(m in x for m in marcas_filtro)
+                )
+            ].copy()
+
+            # Extraer mes número
+            if col_mes:
+                df_suv["MES_NUM"] = pd.to_numeric(
+                    df_suv[col_mes].astype(str).str.extract(r"(\d+)")[0],
+                    errors="coerce"
+                )
+            else:
+                df_suv["MES_NUM"] = 1
+
+            # Periodo
+            if col_anio:
+                df_suv["PERIODO"] = pd.to_datetime(dict(
+                    year=pd.to_numeric(df_suv[col_anio], errors="coerce"),
+                    month=df_suv["MES_NUM"].fillna(1).astype(int),
+                    day=1
+                ), errors="coerce")
+                df_suv["PERIODO_YM"] = df_suv["PERIODO"].dt.strftime("%Y-%m")
+                df_suv["AÑO"] = pd.to_numeric(df_suv[col_anio], errors="coerce")
+            else:
+                df_suv["PERIODO"] = pd.NaT
+                df_suv["PERIODO_YM"] = "N/A"
+                df_suv["AÑO"] = None
+
+            # Normalizar columnas clave
+            df_suv["MARCA"]   = df_suv[col_marca].astype(str).str.upper().str.strip()
+            df_suv["MODELO"]  = df_suv[col_modelo].astype(str).str.upper().str.strip()
+            df_suv["VERSION"] = df_suv[col_version].astype(str).str.strip() if col_version else "—"
+            df_suv["CATEGORIA"] = df_suv[col_cat].astype(str).str.strip() if col_cat else "—"
+            df_suv["UNIDADES"] = pd.to_numeric(df_suv[col_acum], errors="coerce").fillna(0)
+
+            # Resumen agrupado
+            grp_cols = ["AÑO", "MES_NUM", "PERIODO", "PERIODO_YM", "CATEGORIA", "MARCA", "MODELO", "VERSION"]
+            grp_cols_ok = [c for c in grp_cols if c in df_suv.columns]
+
+            df_resumen = (
+                df_suv.groupby(grp_cols_ok, as_index=False)["UNIDADES"].sum()
+            )
+            df_resumen = df_resumen.sort_values(["MARCA", "MODELO", "VERSION", "AÑO", "MES_NUM"])
+
+            # Variación mensual por marca+modelo+version
+            df_resumen["VAR_UNID_NOM"] = df_resumen.groupby(["MARCA", "MODELO", "VERSION"])["UNIDADES"].diff()
+            df_resumen["VAR_UNID_PCT"] = df_resumen.groupby(["MARCA", "MODELO", "VERSION"])["UNIDADES"].pct_change()
+
+            return df_suv, df_resumen, grp_cols_ok, None
+
+        # ── Filtro de marcas antes de cargar
+        st.markdown('<p class="section-title">Filtro de marcas</p>', unsafe_allow_html=True)
+        col_ma, col_mb = st.columns([4, 1])
+        with col_ma:
+            marcas_inmat_sel = st.multiselect(
+                "Marcas a incluir",
+                options=sorted(MARCAS_DISPONIBLES),
+                default=sorted(MARCAS_DISPONIBLES),
+                key="inmat_marcas",
+                label_visibility="collapsed"
+            )
+        with col_mb:
+            anios_disp = [2023, 2024, 2025, 2026]
+            anio_sel = st.multiselect("Año", anios_disp, default=[2025], key="inmat_anio")
+
+        if not marcas_inmat_sel:
+            st.markdown('<div class="astara-warning">⚠️ Seleccioná al menos una marca.</div>', unsafe_allow_html=True)
+        else:
+            inmat_bytes = uploaded_inmat.getvalue()
+            df_raw_i, df_res, grp_cols_ok, err = etl_inmatriculaciones(
+                inmat_bytes, tuple(sorted(marcas_inmat_sel))
+            )
+
+            if err:
+                st.markdown(f'<div class="astara-warning">❌ {err}</div>', unsafe_allow_html=True)
+            else:
+                # Filtro por año
+                if anio_sel and "AÑO" in df_res.columns:
+                    df_res_f = df_res[df_res["AÑO"].isin(anio_sel)].copy()
+                else:
+                    df_res_f = df_res.copy()
+
+                # ── KPIs
+                total_u  = int(df_res_f["UNIDADES"].sum())
+                n_marcas = df_res_f["MARCA"].nunique()
+                n_mod    = df_res_f["MODELO"].nunique()
+                n_meses  = df_res_f["PERIODO_YM"].nunique()
+
+                st.markdown(f"""
+                <div class="astara-success">
+                    ✅&nbsp;&nbsp;<strong>Dataset procesado</strong> —
+                    <strong style="color:#F0B74D">{total_u:,}</strong> unidades inmatriculadas ·
+                    {n_marcas} marcas · {n_mod} modelos
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class="metric-row">
+                    <div class="metric-card"><div class="metric-label">Unidades totales</div><div class="metric-value">{total_u:,}</div></div>
+                    <div class="metric-card"><div class="metric-label">Marcas</div><div class="metric-value"><span>{n_marcas}</span></div></div>
+                    <div class="metric-card"><div class="metric-label">Modelos</div><div class="metric-value"><span>{n_mod}</span></div></div>
+                    <div class="metric-card"><div class="metric-label">Períodos</div><div class="metric-value"><span>{n_meses}</span></div></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ══════════════════════════════════════════
+                # GRÁFICO 1 — RANKING MARCAS (barras)
+                # ══════════════════════════════════════════
+                st.markdown('<p class="section-title">Ranking de marcas · unidades totales</p>', unsafe_allow_html=True)
+
+                df_rank = (
+                    df_res_f.groupby("MARCA", as_index=False)["UNIDADES"].sum()
+                    .sort_values("UNIDADES", ascending=True)
+                )
+                color_map_m = {m: PLOTLY_COLORS[i % len(PLOTLY_COLORS)] for i, m in enumerate(df_rank["MARCA"])}
+
+                fig_rank = go.Figure(go.Bar(
+                    y=df_rank["MARCA"],
+                    x=df_rank["UNIDADES"],
+                    orientation="h",
+                    marker_color=[color_map_m[m] for m in df_rank["MARCA"]],
+                    text=df_rank["UNIDADES"].apply(lambda x: f"{x:,.0f}"),
+                    textposition="outside",
+                    textfont=dict(color="#D4C9F0", size=10),
+                    hovertemplate="<b>%{y}</b><br>Unidades: %{x:,.0f}<extra></extra>"
+                ))
+                fig_rank.update_layout(
+                    **PLOTLY_LAYOUT,
+                    title=dict(text="Inmatriculaciones por Marca", font=dict(color=LIME, size=14)),
+                    height=max(350, len(df_rank) * 32),
+                    xaxis_title="Unidades",
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_rank, use_container_width=True)
+
+                # ══════════════════════════════════════════
+                # GRÁFICO 2 — EVOLUCIÓN MENSUAL POR MARCA
+                # ══════════════════════════════════════════
+                st.markdown('<p class="section-title">Evolución mensual por marca</p>', unsafe_allow_html=True)
+
+                marcas_evo = st.multiselect(
+                    "Seleccioná marcas para el gráfico de evolución",
+                    sorted(df_res_f["MARCA"].dropna().unique()),
+                    default=sorted(df_res_f["MARCA"].dropna().unique())[:8],
+                    key="inmat_evo_marcas"
+                )
+
+                df_evo = (
+                    df_res_f[df_res_f["MARCA"].isin(marcas_evo)]
+                    .groupby(["PERIODO", "MARCA"], as_index=False)["UNIDADES"].sum()
+                    .sort_values("PERIODO")
+                )
+                df_evo["PERIODO"] = pd.to_datetime(df_evo["PERIODO"], errors="coerce")
+
+                fig_evo = go.Figure()
+                for i, marca in enumerate(marcas_evo):
+                    df_m = df_evo[df_evo["MARCA"] == marca]
+                    fig_evo.add_trace(go.Scatter(
+                        x=df_m["PERIODO"], y=df_m["UNIDADES"],
+                        name=marca,
+                        mode="lines+markers",
+                        line=dict(color=PLOTLY_COLORS[i % len(PLOTLY_COLORS)], width=2),
+                        marker=dict(size=5),
+                        hovertemplate="<b>%{fullData.name}</b><br>%{x|%b %Y}<br>Unidades: %{y:,.0f}<extra></extra>"
+                    ))
+                fig_evo.update_layout(
+                    **PLOTLY_LAYOUT,
+                    title=dict(text="Evolución Mensual de Inmatriculaciones", font=dict(color=LIME, size=14)),
+                    height=420, xaxis_title="Mes", yaxis_title="Unidades"
+                )
+                st.plotly_chart(fig_evo, use_container_width=True)
+
+                # ══════════════════════════════════════════
+                # GRÁFICO 3 — SHARE DE MERCADO (pie/donut)
+                # ══════════════════════════════════════════
+                st.markdown('<p class="section-title">Share de mercado por marca</p>', unsafe_allow_html=True)
+
+                col_g1, col_g2 = st.columns(2)
+                with col_g1:
+                    df_share = df_res_f.groupby("MARCA", as_index=False)["UNIDADES"].sum().sort_values("UNIDADES", ascending=False)
+                    fig_pie = go.Figure(go.Pie(
+                        labels=df_share["MARCA"],
+                        values=df_share["UNIDADES"],
+                        hole=0.5,
+                        marker=dict(colors=PLOTLY_COLORS[:len(df_share)], line=dict(color="#1E1932", width=2)),
+                        textfont=dict(size=10, color="#D4C9F0"),
+                        hovertemplate="<b>%{label}</b><br>Unidades: %{value:,.0f}<br>Share: %{percent}<extra></extra>"
+                    ))
+                    fig_pie.update_layout(
+                        **PLOTLY_LAYOUT,
+                        title=dict(text="Share por Marca", font=dict(color=LIME, size=13)),
+                        height=380, showlegend=True,
+                        legend=dict(font=dict(size=9))
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+
+                with col_g2:
+                    # Top 10 modelos
+                    df_top_mod = (
+                        df_res_f.groupby("MODELO", as_index=False)["UNIDADES"].sum()
+                        .sort_values("UNIDADES", ascending=False).head(10)
+                    )
+                    fig_mod = go.Figure(go.Bar(
+                        y=df_top_mod["MODELO"],
+                        x=df_top_mod["UNIDADES"],
+                        orientation="h",
+                        marker_color=PLOTLY_COLORS[:len(df_top_mod)],
+                        text=df_top_mod["UNIDADES"].apply(lambda x: f"{x:,.0f}"),
+                        textposition="outside",
+                        textfont=dict(color="#D4C9F0", size=10),
+                        hovertemplate="<b>%{y}</b><br>Unidades: %{x:,.0f}<extra></extra>"
+                    ))
+                    fig_mod.update_layout(
+                        **PLOTLY_LAYOUT,
+                        title=dict(text="Top 10 Modelos", font=dict(color=LIME, size=13)),
+                        height=380, showlegend=False
+                    )
+                    st.plotly_chart(fig_mod, use_container_width=True)
+
+                # ══════════════════════════════════════════
+                # GRÁFICO 4 — DETALLE POR MODELO (filtrado)
+                # ══════════════════════════════════════════
+                st.markdown('<p class="section-title">Evolución mensual · detalle por modelo</p>', unsafe_allow_html=True)
+
+                col_d1, col_d2, col_d3 = st.columns(3)
+                with col_d1:
+                    marcas_det = sorted(df_res_f["MARCA"].dropna().unique())
+                    marca_det_sel = st.multiselect("Marca", marcas_det, key="inmat_det_marca")
+                with col_d2:
+                    df_det_tmp = df_res_f[df_res_f["MARCA"].isin(marca_det_sel)] if marca_det_sel else df_res_f
+                    modelos_det = sorted(df_det_tmp["MODELO"].dropna().unique())
+                    modelo_det_sel = st.multiselect("Modelo", modelos_det, key="inmat_det_modelo")
+                with col_d3:
+                    df_det_tmp2 = df_det_tmp[df_det_tmp["MODELO"].isin(modelo_det_sel)] if modelo_det_sel else df_det_tmp
+                    vers_det = sorted(df_det_tmp2["VERSION"].dropna().unique())
+                    version_det_sel = st.multiselect("Versión", vers_det, key="inmat_det_version")
+
+                df_det = df_det_tmp2.copy()
+                if version_det_sel:
+                    df_det = df_det[df_det["VERSION"].isin(version_det_sel)]
+
+                if not df_det.empty:
+                    df_det["ETIQUETA"] = df_det["MARCA"] + " · " + df_det["MODELO"] + " · " + df_det["VERSION"]
+                    df_det_evo = df_det.groupby(["PERIODO", "ETIQUETA"], as_index=False)["UNIDADES"].sum().sort_values("PERIODO")
+                    df_det_evo["PERIODO"] = pd.to_datetime(df_det_evo["PERIODO"], errors="coerce")
+                    etiquetas_det = sorted(df_det_evo["ETIQUETA"].dropna().unique())
+
+                    fig_det = go.Figure()
+                    for i, etiq in enumerate(etiquetas_det):
+                        df_e = df_det_evo[df_det_evo["ETIQUETA"] == etiq]
+                        fig_det.add_trace(go.Scatter(
+                            x=df_e["PERIODO"], y=df_e["UNIDADES"],
+                            name=etiq,
+                            mode="lines+markers",
+                            line=dict(color=PLOTLY_COLORS[i % len(PLOTLY_COLORS)], width=2),
+                            marker=dict(size=5),
+                            hovertemplate="<b>%{fullData.name}</b><br>%{x|%b %Y}<br>Unidades: %{y:,.0f}<extra></extra>"
+                        ))
+                    fig_det.update_layout(
+                        **PLOTLY_LAYOUT,
+                        title=dict(text="Evolución Mensual por Versión", font=dict(color=LIME, size=14)),
+                        height=420
+                    )
+                    st.plotly_chart(fig_det, use_container_width=True)
+
+                    # ── Acumulado por versión (barras apiladas)
+                    df_acum_ver = (
+                        df_det.groupby(["ETIQUETA"], as_index=False)["UNIDADES"].sum()
+                        .sort_values("UNIDADES", ascending=True)
+                    )
+                    fig_acum = go.Figure(go.Bar(
+                        y=df_acum_ver["ETIQUETA"],
+                        x=df_acum_ver["UNIDADES"],
+                        orientation="h",
+                        marker_color=[PLOTLY_COLORS[i % len(PLOTLY_COLORS)] for i in range(len(df_acum_ver))],
+                        text=df_acum_ver["UNIDADES"].apply(lambda x: f"{x:,.0f}"),
+                        textposition="outside",
+                        textfont=dict(color="#D4C9F0", size=10),
+                        hovertemplate="<b>%{y}</b><br>Unidades: %{x:,.0f}<extra></extra>"
+                    ))
+                    fig_acum.update_layout(
+                        **PLOTLY_LAYOUT,
+                        title=dict(text="Acumulado por Versión", font=dict(color=LIME, size=13)),
+                        height=max(300, len(df_acum_ver) * 35),
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig_acum, use_container_width=True)
+
+                # ══════════════════════════════════════════
+                # TABLA + DESCARGA
+                # ══════════════════════════════════════════
+                st.markdown('<p class="section-title">Tabla de datos</p>', unsafe_allow_html=True)
+
+                pct_cols_i = [c for c in df_res_f.columns if "PCT" in c]
+                df_show_i = df_res_f.copy()
+                for c in pct_cols_i:
+                    df_show_i[c] = df_show_i[c].map(lambda x: f"{x:.1%}" if pd.notna(x) else "")
+
+                st.markdown(f'<div style="font-size:0.75rem;color:#444;margin-bottom:0.4rem;">{len(df_res_f):,} registros</div>', unsafe_allow_html=True)
+                st.dataframe(df_show_i.drop(columns=["PERIODO"], errors="ignore"), use_container_width=True, height=360)
+
+                st.markdown('<p class="section-title">Exportar</p>', unsafe_allow_html=True)
+                buf_i = io.BytesIO()
+                df_res_f.to_csv(buf_i, index=False, encoding="utf-8-sig")
+                buf_i.seek(0)
+                st.download_button(
+                    label="⬇️  Descargar inmatriculaciones (.csv)",
+                    data=buf_i,
+                    file_name="inmatriculaciones_suv.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_inmat"
                 )
