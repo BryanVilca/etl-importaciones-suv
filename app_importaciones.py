@@ -1992,23 +1992,36 @@ with tab4:
             # FILTROS
             # ══════════════════════════════════════════════
             st.markdown('<p class="section-title">Filtros</p>', unsafe_allow_html=True)
-            col_f1, col_f2, col_f3 = st.columns(3)
+            col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 
             with col_f1:
                 marcas_disp = ["Todas"] + sorted(df_all["MARCA"].dropna().unique())
                 marca_sel = st.selectbox("Marca", marcas_disp, key="match_marca")
             with col_f2:
-                estado_sel = st.selectbox("Estado", ["Todos", "Sin asignar", "Asignados"], key="match_estado")
+                df_tmp_m = df_all[df_all["MARCA"] == marca_sel] if marca_sel != "Todas" else df_all
+                modelos_disp = ["Todos"] + sorted(df_tmp_m["MODELO"].dropna().unique())
+                modelo_sel = st.selectbox("Modelo", modelos_disp, key="match_modelo")
             with col_f3:
+                df_tmp_v = df_tmp_m[df_tmp_m["MODELO"] == modelo_sel] if modelo_sel != "Todos" else df_tmp_m
+                vers_raw = df_tmp_v["VERSION"].dropna().replace("", float("nan")).dropna().unique()
+                versiones_disp = ["Todas"] + sorted(vers_raw)
+                version_sel = st.selectbox("Versión", versiones_disp, key="match_version")
+            with col_f4:
+                estado_sel = st.selectbox("Estado", ["Todos", "Sin asignar", "Asignados"], key="match_estado")
+            with col_f5:
                 fuente_sel = st.multiselect(
                     "Fuente", ["IMP","PRE","INM"],
                     default=["IMP","PRE","INM"], key="match_fuente"
                 )
 
-            # Aplicar filtros
+            # Aplicar filtros en cascada
             df_view = df_all.copy()
             if marca_sel != "Todas":
                 df_view = df_view[df_view["MARCA"] == marca_sel]
+            if modelo_sel != "Todos":
+                df_view = df_view[df_view["MODELO"] == modelo_sel]
+            if version_sel != "Todas":
+                df_view = df_view[df_view["VERSION"] == version_sel]
             if fuente_sel:
                 df_view = df_view[df_view["FUENTE"].isin(fuente_sel)]
             if estado_sel == "Sin asignar":
