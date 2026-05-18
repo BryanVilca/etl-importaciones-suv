@@ -1426,10 +1426,10 @@ with tab3:
 
     uploaded_inmat = st.file_uploader(
         "Dataset Inmatriculaciones",
-        type=["csv", "xlsx", "xls"],
+        type=["xlsx", "xls", "csv"],
         key="uploader_inmat",
         label_visibility="collapsed",
-        help="Archivo Market_Results en .csv (recomendado) o .xlsx"
+        help="Archivo Market_Results en .xlsx, .xls o .csv"
     )
 
     if uploaded_inmat is None:
@@ -1452,13 +1452,26 @@ with tab3:
         def etl_inmatriculaciones(file_bytes: bytes, file_name: str, marcas_filtro: tuple) -> tuple:
             import io
             buf = io.BytesIO(file_bytes)
-            if file_name.endswith(".csv"):
+            name = file_name.lower()
+            if name.endswith(".csv"):
                 try:
                     df = pd.read_csv(buf, encoding="utf-8")
                 except UnicodeDecodeError:
                     df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin1")
+            elif name.endswith(".xlsx"):
+                df = pd.read_excel(buf, engine="openpyxl")
+            elif name.endswith(".xls"):
+                # Detectar si es TSV disfrazado
+                sniff = file_bytes[:300]
+                if b"\t" in sniff:
+                    try:
+                        df = pd.read_csv(io.BytesIO(file_bytes), sep="\t", encoding="latin1", on_bad_lines="skip")
+                    except Exception:
+                        df = pd.read_excel(buf, engine="xlrd")
+                else:
+                    df = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
             else:
-                df = pd.read_excel(buf)
+                df = pd.read_excel(buf, engine="openpyxl")
 
             # Filtrar SUV
             col_carr = next((c for c in df.columns if "carroceria" in c.lower()), None)
@@ -1784,8 +1797,22 @@ with tab3:
                 st.dataframe(df_show_i.drop(columns=["PERIODO"], errors="ignore"), use_container_width=True, height=360)
 
                 st.markdown('<p class="section-title">Exportar</p>', unsafe_allow_html=True)
+                # Renombrar columnas a nombres estándar antes de exportar
+                df_export_inmat = df_res_f.copy()
+                rename_map = {
+                    c: "MARCA"   for c in df_export_inmat.columns if c.upper() in ["MARCA HOMOLOGADA", "MARCA_HOMOLOGADA"] 
+                }
+                rename_map.update({
+                    c: "MODELO"  for c in df_export_inmat.columns if c.upper() in ["MODELO HOMOLOGADO", "MODELO_HOMOLOGADO"]
+                })
+                rename_map.update({
+                    c: "VERSION" for c in df_export_inmat.columns if c.upper() in ["VERSIÓN", "VERSION HOMOLOGADA"]
+                    and c not in rename_map
+                })
+                df_export_inmat = df_export_inmat.rename(columns=rename_map)
+
                 buf_i = io.BytesIO()
-                df_res_f.to_csv(buf_i, index=False, encoding="utf-8-sig")
+                df_export_inmat.to_csv(buf_i, index=False, encoding="utf-8-sig")
                 buf_i.seek(0)
                 st.download_button(
                     label="⬇️  Descargar inmatriculaciones (.csv)",
@@ -1822,7 +1849,7 @@ with tab4:
         f_pre = st.file_uploader("Precios", type=["csv"], key="cat_pre", label_visibility="collapsed")
     with col_c3:
         st.markdown('<div style="font-size:0.78rem;color:#9B8FBB;margin-bottom:4px;">🚘 Inmatriculaciones</div>', unsafe_allow_html=True)
-        f_inm = st.file_uploader("Inmatriculaciones", type=["csv"], key="cat_inm", label_visibility="collapsed")
+        f_inm = st.file_uploader("Inmatriculaciones", type=["csv","xlsx","xls"], key="cat_inm", label_visibility="collapsed")
 
     # badges de estado
     badges = ""
@@ -1880,14 +1907,33 @@ with tab4:
                     registros.append(sub)
 
             if inm_b:
-                df = pd.read_csv(io.BytesIO(inm_b), encoding="utf-8")
-                col_m  = next((c for c in df.columns if "marca" in c.lower()), None)
-                col_mo = next((c for c in df.columns if "modelo" in c.lower()), None)
-                col_v  = next((c for c in df.columns if "version" in c.lower()), None)
+                name_inm = getattr(f_inm, "name", "file.csv").lower() if f_inm else "file.csv"
+                if name_inm.endswith(".xlsx"):
+                    df = pd.read_excel(io.BytesIO(inm_b), engine="openpyxl")
+                elif name_inm.endswith(".xls"):
+                    sniff = inm_b[:300]
+                    if b"\t" in sniff:
+                        df = pd.read_csv(io.BytesIO(inm_b), sep="\t", encoding="latin1", on_bad_lines="skip")
+                    else:
+                        df = pd.read_excel(io.BytesIO(inm_b), engine="xlrd")
+                else:
+                    try:
+                        df = pd.read_csv(io.BytesIO(inm_b), encoding="utf-8")
+                    except Exception:
+                        df = pd.read_csv(io.BytesIO(inm_b), encoding="latin1")
+                # Exact match first, then partial — evita columnas compuestas
+                col_m  = next((c for c in df.columns if c.upper() == "MARCA"), None) or                           next((c for c in df.columns if c.upper() == "MARCA HOMOLOGADA"), None) or                           next((c for c in df.columns if c.upper() == "MARCA_HOMOLOGADA"), None)
+                col_mo = next((c for c in df.columns if c.upper() == "MODELO"), None) or                           next((c for c in df.columns if c.upper() == "MODELO HOMOLOGADO"), None) or                           next((c for c in df.columns if c.upper() == "MODELO_HOMOLOGADO"), None)
+                col_v  = next((c for c in df.columns if c.upper() == "VERSION"), None) or                           next((c for c in df.columns if c.upper() == "VERSIÓN"), None)
                 if col_m and col_mo:
                     sub = df[[col_m, col_mo] + ([col_v] if col_v else [])].copy()
                     sub.columns = ["MARCA","MODELO"] + (["VERSION"] if col_v else [])
                     if "VERSION" not in sub.columns: sub["VERSION"] = ""
+                    # Limpiar valores raros
+                    sub["MARCA"]  = sub["MARCA"].astype(str).str.upper().str.strip()
+                    sub["MODELO"] = sub["MODELO"].astype(str).str.upper().str.strip()
+                    sub["VERSION"] = sub["VERSION"].astype(str).str.strip()
+                    sub = sub[sub["MARCA"].str.len() <= 30]  # descartar concatenaciones
                     sub = sub.dropna(subset=["MARCA","MODELO"]).drop_duplicates()
                     sub["FUENTE"] = "INM"
                     registros.append(sub)
