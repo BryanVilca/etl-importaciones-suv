@@ -1474,14 +1474,19 @@ with tab3:
                 df = pd.read_excel(buf, engine="openpyxl")
 
             # Filtrar SUV
-            col_carr = next((c for c in df.columns if "carroceria" in c.lower()), None)
-            col_marca = next((c for c in df.columns if "marca" in c.lower()), None)
-            col_modelo = next((c for c in df.columns if "modelo" in c.lower()), None)
-            col_anio = next((c for c in df.columns if c.upper() in ["AÑO", "ANO", "YEAR"]), None)
-            col_mes = next((c for c in df.columns if c.upper() == "MES"), None)
-            col_acum = next((c for c in df.columns if "acum" in c.lower()), None)
-            col_version = next((c for c in df.columns if "version" in c.lower()), None)
-            col_cat = next((c for c in df.columns if "categor" in c.lower()), None)
+            # Normalizar nombres de columna
+            df.columns = [str(c).strip() for c in df.columns]
+            cols_map = {c.upper(): c for c in df.columns}
+
+            # Buscar columnas con prioridad exacta (evita agarrar ID concatenado)
+            col_carr   = cols_map.get("CARROCERIA HOMOLOGADA") or                          next((c for c in df.columns if "carroceria" in c.lower() and "id" not in c.lower()), None)
+            col_marca  = cols_map.get("MARCA HOMOLOGADA") or                          cols_map.get("MARCA") or                          next((c for c in df.columns if c.upper().startswith("MARCA") and "id" not in c.lower() and "&" not in c), None)
+            col_modelo = cols_map.get("MODELO HOMOLOGADO") or                          cols_map.get("MODELO") or                          next((c for c in df.columns if c.upper().startswith("MODELO") and "&" not in c), None)
+            col_anio   = cols_map.get("AÑO") or cols_map.get("ANO") or cols_map.get("YEAR")
+            col_mes    = cols_map.get("MES")
+            col_acum   = cols_map.get("ACUM. TOTAL") or                          next((c for c in df.columns if "acum" in c.lower()), None)
+            col_version = cols_map.get("VERSION") or                           next((c for c in df.columns if "version" in c.lower() and "segmen" not in c.lower()), None)
+            col_cat    = cols_map.get("CATEGORIA") or                          next((c for c in df.columns if "categor" in c.lower() and "segmen" not in c.lower()), None)
 
             missing = [n for n, c in [
                 ("CARROCERIA", col_carr), ("MARCA", col_marca),
@@ -1921,10 +1926,12 @@ with tab4:
                         df = pd.read_csv(io.BytesIO(inm_b), encoding="utf-8")
                     except Exception:
                         df = pd.read_csv(io.BytesIO(inm_b), encoding="latin1")
-                # Exact match first, then partial — evita columnas compuestas
-                col_m  = next((c for c in df.columns if c.upper() == "MARCA"), None) or                           next((c for c in df.columns if c.upper() == "MARCA HOMOLOGADA"), None) or                           next((c for c in df.columns if c.upper() == "MARCA_HOMOLOGADA"), None)
-                col_mo = next((c for c in df.columns if c.upper() == "MODELO"), None) or                           next((c for c in df.columns if c.upper() == "MODELO HOMOLOGADO"), None) or                           next((c for c in df.columns if c.upper() == "MODELO_HOMOLOGADO"), None)
-                col_v  = next((c for c in df.columns if c.upper() == "VERSION"), None) or                           next((c for c in df.columns if c.upper() == "VERSIÓN"), None)
+                # Normalizar y buscar con prioridad exacta
+                df.columns = [str(c).strip() for c in df.columns]
+                cols_map_inm = {c.upper(): c for c in df.columns}
+                col_m  = cols_map_inm.get("MARCA HOMOLOGADA") or cols_map_inm.get("MARCA") or                           next((c for c in df.columns if c.upper().startswith("MARCA") and "&" not in c), None)
+                col_mo = cols_map_inm.get("MODELO HOMOLOGADO") or cols_map_inm.get("MODELO") or                           next((c for c in df.columns if c.upper().startswith("MODELO") and "&" not in c), None)
+                col_v  = cols_map_inm.get("VERSION") or                           next((c for c in df.columns if "version" in c.lower() and "segmen" not in c.lower()), None)
                 if col_m and col_mo:
                     sub = df[[col_m, col_mo] + ([col_v] if col_v else [])].copy()
                     sub.columns = ["MARCA","MODELO"] + (["VERSION"] if col_v else [])
